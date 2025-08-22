@@ -1,3 +1,6 @@
 __pycache__
 **.csv
 **.json
+.DS_Store
+**.txt
+**.gz

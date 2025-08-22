@@ -46,6 +46,9 @@ class Graph:
     n_edges: int
     node_mask: jnp.ndarray | None = None
     edge_mask: jnp.ndarray | None = None
+    # Add node mapping information for NetworkX compatibility
+    _node_to_index: dict | None = None  # Original node ID -> JAX index
+    _index_to_node: list | None = None  # JAX index -> Original node ID
 
     def tree_flatten(self):
         """
@@ -53,7 +56,12 @@ class Graph:
         and a dictionary of static, non-array data (aux_data).
         """
         children = (self.senders, self.receivers, self.edge_weights, self.node_features, self.node_mask, self.edge_mask)
-        aux_data = {'n_nodes': self.n_nodes, 'n_edges': self.n_edges}
+        aux_data = {
+            'n_nodes': self.n_nodes, 
+            'n_edges': self.n_edges,
+            '_node_to_index': self._node_to_index,
+            '_index_to_node': self._index_to_node
+        }
         return (children, aux_data)
 
     @classmethod
@@ -70,8 +78,31 @@ class Graph:
             n_nodes=aux_data['n_nodes'],
             n_edges=aux_data['n_edges'],
             node_mask=node_mask,
-            edge_mask=edge_mask
+            edge_mask=edge_mask,
+            _node_to_index=aux_data.get('_node_to_index'),
+            _index_to_node=aux_data.get('_index_to_node')
         )
+
+    def get_original_node_id(self, jax_index: int):
+        """Get the original NetworkX node ID from JAX index."""
+        if self._index_to_node is None:
+            return jax_index  # No mapping available, return index as-is
+        return self._index_to_node[jax_index]
+    
+    def get_jax_index(self, original_node_id):
+        """Get the JAX index from original NetworkX node ID."""
+        if self._node_to_index is None:
+            return original_node_id  # No mapping available, return as-is
+        return self._node_to_index[original_node_id]
+    
+    def map_jax_results_to_original(self, jax_results: jnp.ndarray):
+        """Map JAX results (indexed by JAX indices) back to original node IDs."""
+        if self._index_to_node is None:
+            # No mapping available, return results with consecutive indices
+            return {i: float(jax_results[i]) for i in range(len(jax_results))}
+        
+        # Map back to original node IDs
+        return {self._index_to_node[i]: float(jax_results[i]) for i in range(len(jax_results))}
 
     def to_adjacency_matrix(self) -> jnp.ndarray:
         """将稀疏图转换为稠密的 JAX 邻接矩阵。"""

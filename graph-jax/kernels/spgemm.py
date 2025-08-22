@@ -13,13 +13,15 @@ def _spgemm_single(
     feature_dim: int
 ) -> jnp.ndarray:
     """内部函数：对单个图执行 SpGEMM (消息传递)。"""
-    messages = node_features.at[graph.receivers].get()
+    # Fix: Take features from senders, not receivers
+    messages = node_features.at[graph.senders].get()
     
     if graph.edge_weights is not None:
         messages *= graph.edge_weights[:, None]
 
     aggregated_features = jnp.zeros((n_nodes, feature_dim))
-    aggregated_features = aggregated_features.at[graph.senders].add(messages)
+    # Fix: Add messages to receivers, not senders
+    aggregated_features = aggregated_features.at[graph.receivers].add(messages)
     
     return aggregated_features
 

@@ -14,14 +14,18 @@ def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
     if not isinstance(g, (nx.Graph, nx.DiGraph)):
         raise TypeError(f"只支持 nx.Graph 和 nx.DiGraph，但得到的是 {type(g)}")
 
-    n_nodes = g.number_of_nodes()
+    # Create a mapping from original node IDs to consecutive indices
+    all_nodes = sorted(g.nodes())
+    node_to_index = {node: idx for idx, node in enumerate(all_nodes)}
+    index_to_node = all_nodes  # This is a list where index -> original node ID
+    n_nodes = len(all_nodes)
     
     # 提取边列表和权重
     if g.is_directed():
         # 对于有向图，直接使用边
         edges = list(g.edges(data=True))
-        senders = [u for u, v, d in edges]
-        receivers = [v for u, v, d in edges]
+        senders = [node_to_index[u] for u, v, d in edges]
+        receivers = [node_to_index[v] for u, v, d in edges]
         weights_list = [d.get('weight', 1.0) for u, v, d in edges]
     else:
         # 对于无向图，为每条边创建两个方向的边
@@ -29,8 +33,10 @@ def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
         receivers = []
         weights_list = []
         for u, v, data in g.edges(data=True):
-            senders.extend([u, v])
-            receivers.extend([v, u])
+            u_idx = node_to_index[u]
+            v_idx = node_to_index[v]
+            senders.extend([u_idx, v_idx])
+            receivers.extend([v_idx, u_idx])
             weight = data.get('weight', 1.0)
             weights_list.extend([weight, weight])
 
@@ -53,7 +59,8 @@ def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
         first_node_data = next(iter(g.nodes(data=True)))[1]
         if node_feature_key in first_node_data:
             try:
-                node_features_list = [g.nodes[i][node_feature_key] for i in range(n_nodes)]
+                # Use the mapping to ensure features are in the correct order
+                node_features_list = [g.nodes[node][node_feature_key] for node in all_nodes]
                 
                 # 修正: 检查特征是否为字符串，如果是则进行编码
                 if node_features_list and isinstance(node_features_list[0], str):
@@ -82,7 +89,9 @@ def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
         edge_weights=weights,
         n_nodes=n_nodes,
         n_edges=n_edges, # 使用修正后的 n_edges
-        node_features=node_features
+        node_features=node_features,
+        _node_to_index=node_to_index,
+        _index_to_node=index_to_node
     )
 
 def from_json(file_path: str) -> Graph:
