@@ -12,35 +12,6 @@ def gemm(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
     """
     return a @ b
 
-@jax.jit
-def spgemm(graph: Graph, node_features: jnp.ndarray) -> jnp.ndarray:
-    """
-    稀疏-稠密矩阵乘法 (Sparse-GEMM)，也称为消息传递或图传播算子。
-    它高效地计算 A_sparse @ X_dense，其中 A_sparse 是图的邻接矩阵。
-
-    Args:
-        graph (Graph): 包含稀疏连接信息的图对象。
-        node_features (jnp.ndarray): 节点特征矩阵 (X_dense)。
-
-    Returns:
-        jnp.ndarray: 传播后的新节点特征矩阵。
-    """
-    # 1. 从发送方节点收集特征 (Gather)
-    sender_features = node_features[graph.senders]
-
-    # 2. (可选) 按边权重缩放消息
-    if graph.edge_weights is not None:
-        # 使用广播将权重应用到每个特征维度
-        messages = sender_features * graph.edge_weights[:, None]
-    else:
-        messages = sender_features
-
-    # 3. 将消息聚合到接收方节点 (Sum Aggregation)
-    # 创建一个全零矩阵，然后将消息累加到对应的接收方索引上
-    aggregated_features = jnp.zeros_like(node_features).at[graph.receivers].add(messages)
-    
-    return aggregated_features
-
 @partial(jax.jit, static_argnames=('strides', 'padding'))
 def conv(
     inputs: jnp.ndarray, 

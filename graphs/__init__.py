@@ -1,2 +1,3 @@
-from .graph import Graph
-from .io import from_networkx, from_json, from_csv, to_networkx, to_json, to_csv
+from .graph import Graph 
+from .io import from_networkx, to_networkx, to_json, from_json, to_csv, from_csv
+from .utils import batch_graphs

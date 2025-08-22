@@ -5,7 +5,7 @@ from .matrix import (
     random_walk_normalized_laplacian,
     laplacian_eigensystem
 )
-from .ops import gemm, spgemm, conv, conv_1x1, conv_3x3
+from .ops import gemm, conv, conv_1x1, conv_3x3
 from .activations import relu, sigmoid, tanh, leaky_relu, softmax, log_softmax
 from .losses import (
     cross_entropy_loss, 
@@ -13,3 +13,5 @@ from .losses import (
     mean_squared_error,
     mean_absolute_error
 )
+from .spgemm import spgemm
+from .parallel_spgemm import spgemm_pmap

@@ -3,6 +3,8 @@ import jax.numpy as jnp
 from flax import struct
 from functools import partial
 from typing import Optional
+from dataclasses import dataclass
+import jax.tree_util
 
 # --- 内部 JIT 编译的纯函数 ---
 
@@ -27,24 +29,49 @@ def _to_adjacency_matrix_pure(
 
 # --- Graph 数据结构 ---
 
-@struct.dataclass
+@dataclass
 class Graph:
     """
-    一个表示图结构的 JAX 兼容数据类。
+    A JAX-compatible sparse graph data structure, registered as a JAX Pytree.
 
-    使用稀疏的 COO 格式 (senders, receivers) 存储边。
-    所有属性都应该是 JAX 数组，以便与 JIT 兼容。
-    图的形状信息 (n_nodes, n_edges) 作为静态元数据存储。
+    This allows the Graph object to be passed directly into jax.jit, jax.vmap,
+    and other JAX transformations. JAX will automatically handle flattening
+    and unflattening the graph's array components (leaves).
     """
-    # 修正: 将没有默认值的属性放在前面
     senders: jnp.ndarray
     receivers: jnp.ndarray
-    edge_weights: Optional[jnp.ndarray]
-    n_nodes: int = struct.field(pytree_node=False)
-    n_edges: int = struct.field(pytree_node=False)
-    
-    # 修正: 将有默认值的属性放在最后
-    node_features: Optional[jnp.ndarray] = None
+    edge_weights: jnp.ndarray | None
+    node_features: jnp.ndarray | None
+    n_nodes: int
+    n_edges: int
+    node_mask: jnp.ndarray | None = None
+    edge_mask: jnp.ndarray | None = None
+
+    def tree_flatten(self):
+        """
+        Flattens the Graph into a list of dynamic array components (children)
+        and a dictionary of static, non-array data (aux_data).
+        """
+        children = (self.senders, self.receivers, self.edge_weights, self.node_features, self.node_mask, self.edge_mask)
+        aux_data = {'n_nodes': self.n_nodes, 'n_edges': self.n_edges}
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        """
+        Reconstructs a Graph from its dynamic children and static aux_data.
+        """
+        senders, receivers, edge_weights, node_features, node_mask, edge_mask = children
+        return cls(
+            senders=senders,
+            receivers=receivers,
+            edge_weights=edge_weights,
+            node_features=node_features,
+            n_nodes=aux_data['n_nodes'],
+            n_edges=aux_data['n_edges'],
+            node_mask=node_mask,
+            edge_mask=edge_mask
+        )
 
     def to_adjacency_matrix(self) -> jnp.ndarray:
         """将稀疏图转换为稠密的 JAX 邻接矩阵。"""
@@ -66,3 +93,6 @@ class Graph:
             n_nodes=self.n_nodes,
             n_edges=self.n_edges
         )
+
+# Register the Graph class as a custom Pytree node for JAX
+jax.tree_util.register_pytree_node_class(Graph)
