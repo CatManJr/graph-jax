@@ -1,17 +1,23 @@
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import numpy as np
-import jax.numpy as jnp
 import networkx as nx
 import os
 import time
-import jax
 import timeit
-from graphs import from_networkx
-from algorithms.pagerank import pagerank
 
-# Enable JAX float64 globally
-jax.config.update("jax_enable_x64", True)
+# import necessary modules from graph-jax
+from graph_jax.utils import *
+from graph_jax.graphs import from_networkx
+from graph_jax.algorithms.pagerank import pagerank
+
+# Let XLA know the JAX environment
+set_backend('cpu')
+get_jax_env_info()
+
+# Do not import JAX before setting the backend
+import jax
+import jax.numpy as jnp
 
 def comprehensive_timing_analysis():
     """

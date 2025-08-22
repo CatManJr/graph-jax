@@ -1,6 +1,6 @@
 import jax
 import jax.numpy as jnp
-from graphs import Graph
+from ..graphs import Graph
 from functools import partial
 from typing import Optional
 

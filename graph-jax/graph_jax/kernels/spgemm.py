@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from functools import partial
-from graphs import Graph, batch_graphs
+from ..graphs import Graph, batch_graphs
 from typing import List
 
 # We no longer need to mark 'graph' as static, JAX handles it as a Pytree.

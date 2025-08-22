@@ -1,7 +1,7 @@
 import jax
 import jax.numpy as jnp
 from functools import partial
-from graphs import Graph
+from ..graphs import Graph
 
 @partial(jax.jit, static_argnames=('n_nodes', 'feature_dim'))
 def _spgemm_single_graph(

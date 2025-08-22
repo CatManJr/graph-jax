@@ -1,8 +1,8 @@
 import jax
 import jax.numpy as jnp
 from functools import partial
-from graphs import Graph
-from kernels.spgemm import spgemm
+from ..graphs import Graph
+from ..kernels.spgemm import spgemm
 
 @partial(jax.jit, static_argnames=('max_iterations', 'damping_factor', 'tolerance'))
 def pagerank(

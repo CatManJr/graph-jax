@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graph-jax"
+version = "0.1.0"
+description = "Graph algorithms accelerated by JAX on CPU/GPU"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "jax>=0.6.0",
+    "jaxlib",
+    "numpy",
+    "flax",
+    "networkx",
+    "jax-metal",
+]
+
+[tool.setuptools]
+packages = ["graph_jax"]   # 如果你的包目录叫 graph_jax
