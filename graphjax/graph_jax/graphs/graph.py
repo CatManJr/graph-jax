@@ -104,6 +104,41 @@ class Graph:
         # Map back to original node IDs
         return {self._index_to_node[i]: float(jax_results[i]) for i in range(len(jax_results))}
 
+    def is_undirected(self) -> bool:
+        """
+        检测图是否为无向图（通过检查是否存在对称边）。
+        这是一个启发式方法，适用于从NetworkX转换的图。
+        """
+        if self.n_edges == 0:
+            return True
+        
+        # 对于从NetworkX转换的图，如果边数是偶数且存在对称边，则可能是无向图
+        if self.n_edges % 2 == 0:
+            # 检查前几条边是否有对称边
+            sample_size = min(10, self.n_edges // 2)
+            for i in range(sample_size):
+                u, v = self.senders[i], self.receivers[i]
+                # 查找对称边 (v, u)
+                symmetric_exists = jnp.any((self.senders == v) & (self.receivers == u))
+                if not symmetric_exists:
+                    return False
+            return True
+        return False
+
+    def __str__(self) -> str:
+        """字符串表示，自动处理无向图的边数显示"""
+        if self.is_undirected():
+            edge_count = self.n_edges // 2
+            graph_type = "undirected"
+        else:
+            edge_count = self.n_edges
+            graph_type = "directed"
+        return f"Graph({self.n_nodes} nodes, {edge_count} edges, {graph_type})"
+
+    def __repr__(self) -> str:
+        """详细表示"""
+        return self.__str__()
+
     def to_adjacency_matrix(self) -> jnp.ndarray:
         """将稀疏图转换为稠密的 JAX 邻接矩阵。"""
         return _to_adjacency_matrix_pure(

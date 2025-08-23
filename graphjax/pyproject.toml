@@ -18,4 +18,4 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["graph_jax"]   # 如果你的包目录叫 graph_jax
+packages = ["graph_jax"]   

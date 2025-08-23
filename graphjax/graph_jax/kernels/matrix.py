@@ -3,6 +3,7 @@ import jax.numpy as jnp
 from ..graphs import Graph
 from functools import partial
 from typing import Optional
+from jax.experimental import ode
 
 # --- 内部 JIT 编译的纯函数 ---
 
@@ -159,3 +160,43 @@ def laplacian_eigensystem(graph: Graph, k: int, use_weights: bool = False, force
     # 谱分析通常在不带自环的对称归一化拉普拉斯上进行
     l_sym = normalized_laplacian_sym(graph, add_self_loops=False, use_weights=use_weights)
     return _laplacian_eigensystem_pure(l_sym, k=k, force_float64=force_float64)
+
+# steady state solver for the ODE system
+def steady_state(params, *, t_max=50.0, n_steps=200):
+    """
+    使用SciPy ODE求解器计算系统的稳态。
+    
+    TODO: Replace with fast JAX-native ODE solver when stable and mature.
+    Currently using SciPy for consistency and stability.
+    """
+    import numpy as np
+    from scipy.integrate import odeint
+
+    def rhs(y, t, params):
+        y1, y2, y3 = y
+        p, d, s12, s23, s13 = params["p"], params["d"], params["s12"], params["s23"], params["s13"]
+        a12, a23 = params["alpha12"], params["alpha23"]
+
+        dy1 = p - s12 * y1 * y2 - s13 * y1 * y3
+        dy2 = s12 / a12 * y1 * y2 - s23 * y2 * y3
+        dy3 = -d * y3 + s13 / (a12 * a23) * y1 * y3 + s23 / a23 * y2 * y3
+        return [dy1, dy2, dy3]
+
+    y0 = [1.0, 1.0, 1.0]
+    t = np.linspace(0, t_max, n_steps)
+    solution = odeint(rhs, y0, t, args=(params,))
+    
+    # Convert back to JAX array for consistency
+    return jnp.array(solution[-1])
+
+def steady_state_batch(params_array, *, t_max=50.0, n_steps=200):
+    """
+    批量稳态计算。
+    
+    TODO: Optimize with JAX vmap when ODE solver is replaced with JAX-native version.
+    """
+    results = []
+    for params in params_array:
+        result = steady_state(params, t_max=t_max, n_steps=n_steps)
+        results.append(result)
+    return jnp.stack(results)

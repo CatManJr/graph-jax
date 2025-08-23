@@ -2,10 +2,11 @@ import jax.numpy as jnp
 import networkx as nx
 import json
 import pandas as pd
-from typing import Dict, List, Optional, Type
+from typing import Dict, List, Optional, Type, Union
 import warnings
 import numpy as np
 import csv
+import re
 
 from .graph import Graph
 
@@ -14,81 +15,87 @@ def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
     if not isinstance(g, (nx.Graph, nx.DiGraph)):
         raise TypeError(f"只支持 nx.Graph 和 nx.DiGraph，但得到的是 {type(g)}")
 
-    # Create a mapping from original node IDs to consecutive indices
-    all_nodes = sorted(g.nodes())
-    node_to_index = {node: idx for idx, node in enumerate(all_nodes)}
-    index_to_node = all_nodes  # This is a list where index -> original node ID
+    # 优化1: 使用更高效的节点映射创建
+    all_nodes = list(g.nodes())
     n_nodes = len(all_nodes)
     
-    # 提取边列表和权重
+    # 优化2: 使用字典推导式创建映射，避免排序
+    node_to_index = {node: idx for idx, node in enumerate(all_nodes)}
+    index_to_node = all_nodes
+    
+    # 优化3: 预分配列表大小，避免动态扩展
     if g.is_directed():
-        # 对于有向图，直接使用边
         edges = list(g.edges(data=True))
-        senders = [node_to_index[u] for u, v, d in edges]
-        receivers = [node_to_index[v] for u, v, d in edges]
-        weights_list = [d.get('weight', 1.0) for u, v, d in edges]
+        n_edges = len(edges)
+        senders = [0] * n_edges
+        receivers = [0] * n_edges
+        weights_list = [1.0] * n_edges
+        
+        # 优化4: 使用enumerate避免重复查找
+        for i, (u, v, d) in enumerate(edges):
+            senders[i] = node_to_index[u]
+            receivers[i] = node_to_index[v]
+            weights_list[i] = d.get('weight', 1.0)
     else:
-        # 对于无向图，为每条边创建两个方向的边
-        senders = []
-        receivers = []
-        weights_list = []
-        for u, v, data in g.edges(data=True):
+        # 优化5: 对于无向图，预分配双倍大小
+        edges = list(g.edges(data=True))
+        n_edges = len(edges) * 2
+        senders = [0] * n_edges
+        receivers = [0] * n_edges
+        weights_list = [1.0] * n_edges
+        
+        for i, (u, v, data) in enumerate(edges):
             u_idx = node_to_index[u]
             v_idx = node_to_index[v]
-            senders.extend([u_idx, v_idx])
-            receivers.extend([v_idx, u_idx])
             weight = data.get('weight', 1.0)
-            weights_list.extend([weight, weight])
+            
+            # 添加双向边
+            senders[i*2] = u_idx
+            receivers[i*2] = v_idx
+            weights_list[i*2] = weight
+            
+            senders[i*2 + 1] = v_idx
+            receivers[i*2 + 1] = u_idx
+            weights_list[i*2 + 1] = weight
 
-    # 转换列表为 JAX 数组
+    # 优化6: 批量转换为JAX数组
     senders = jnp.array(senders, dtype=jnp.int32)
     receivers = jnp.array(receivers, dtype=jnp.int32)
-    
-    # 修正: n_edges 必须是稀疏表示中边的实际数量
-    n_edges = len(senders)
 
-    # 处理权重
+    # 优化7: 更高效的权重处理
+    weights = None
     if any(w != 1.0 for w in weights_list):
         weights = jnp.array(weights_list, dtype=jnp.float32)
-    else:
-        weights = None
 
-    # 提取节点特征
+    # 优化8: 更高效的节点特征提取
     node_features = None
     if node_feature_key and g.nodes:
-        first_node_data = next(iter(g.nodes(data=True)))[1]
-        if node_feature_key in first_node_data:
-            try:
-                # Use the mapping to ensure features are in the correct order
-                node_features_list = [g.nodes[node][node_feature_key] for node in all_nodes]
+        try:
+            # 优化9: 直接访问节点数据，避免重复查找
+            nodes_data = dict(g.nodes(data=True))
+            if node_feature_key in next(iter(nodes_data.values())):
+                node_features_list = [nodes_data[node].get(node_feature_key, 0) for node in all_nodes]
                 
-                # 修正: 检查特征是否为字符串，如果是则进行编码
+                # 优化10: 更高效的字符串编码
                 if node_features_list and isinstance(node_features_list[0], str):
-                    # 检测到字符串特征，执行标签编码
-                    unique_labels = sorted(list(set(node_features_list)))
+                    unique_labels = list(dict.fromkeys(node_features_list))  # 保持顺序
                     label_map = {label: i for i, label in enumerate(unique_labels)}
-                    warnings.warn(
-                        f"字符串特征 '{node_feature_key}' 被自动编码为整数: {label_map}"
-                    )
                     encoded_features = [label_map[label] for label in node_features_list]
                     node_features = jnp.array(encoded_features)
                 else:
-                    # 否则，假定为数值特征
                     node_features = jnp.array(node_features_list)
 
                 if node_features.ndim == 1:
                     node_features = node_features[:, None]
-            except (KeyError, TypeError) as e:
-                warnings.warn(f"警告: 提取或转换特征时出错: {e}。未提取节点特征。")
-        else:
-            warnings.warn(f"警告: 节点没有特征键 '{node_feature_key}'。未提取节点特征。")
+        except (KeyError, TypeError) as e:
+            warnings.warn(f"警告: 提取或转换特征时出错: {e}。未提取节点特征。")
 
     return Graph(
         senders=senders,
         receivers=receivers,
         edge_weights=weights,
         n_nodes=n_nodes,
-        n_edges=n_edges, # 使用修正后的 n_edges
+        n_edges=n_edges,
         node_features=node_features,
         _node_to_index=node_to_index,
         _index_to_node=index_to_node
