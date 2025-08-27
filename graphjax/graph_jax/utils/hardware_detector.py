@@ -1,7 +1,7 @@
 def get_jax_env_info() -> dict:
     """
-    收集当前机器的 JAX 运行环境信息并返回字典。
-    不修改任何环境变量，不强制初始化任何后端。
+    Collect JAX runtime environment information for the current machine and return a dictionary.
+    Does not modify any environment variables or force initialization of any backend.
     """
     import platform, psutil, sys, os, subprocess
 
@@ -20,7 +20,7 @@ def get_jax_env_info() -> dict:
         "nvidia_gpu": [],
     }
 
-    # --- JAX 版本与依赖 ---
+    # --- JAX versions and dependencies ---
     try:
         import jax, jaxlib, numpy as np, ml_dtypes
         info["jax"]["available"] = True
@@ -33,9 +33,9 @@ def get_jax_env_info() -> dict:
     except ImportError as e:
         info["jax"]["available"] = False
         info["jax"]["error"] = str(e)
-        return info  # 没有 JAX，后续检测无意义
+        return info  # No JAX, subsequent detection meaningless
 
-    # --- 当前可见设备 ---
+    # --- Currently visible devices ---
     try:
         info["devices"] = [
             {"id": i, "description": str(d), "platform": d.platform, "device_kind": d.device_kind}
@@ -45,7 +45,7 @@ def get_jax_env_info() -> dict:
     except Exception as e:
         info["jax"]["device_error"] = str(e)
 
-    # --- Apple Metal 提示 ---
+    # --- Apple Metal hints ---
     try:
         import jax_metal
         info["apple_metal"]["installed"] = True
@@ -68,6 +68,6 @@ def get_jax_env_info() -> dict:
                     "memory_mb": int(mem)
                 })
     except Exception:
-        pass  # nvidia-smi 不存在或无 GPU
+        pass  # nvidia-smi doesn't exist or no GPU
 
     return info

@@ -11,19 +11,19 @@ import re
 from .graph import Graph
 
 def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
-    """从 NetworkX 图对象创建 Graph。"""
+    """Create Graph from NetworkX graph object."""
     if not isinstance(g, (nx.Graph, nx.DiGraph)):
-        raise TypeError(f"只支持 nx.Graph 和 nx.DiGraph，但得到的是 {type(g)}")
+        raise TypeError(f"Only nx.Graph and nx.DiGraph are supported, but got {type(g)}")
 
-    # 优化1: 使用更高效的节点映射创建
+    # Optimization 1: Use more efficient node mapping creation
     all_nodes = list(g.nodes())
     n_nodes = len(all_nodes)
     
-    # 优化2: 使用字典推导式创建映射，避免排序
+    # Optimization 2: Use dictionary comprehension to create mapping, avoid sorting
     node_to_index = {node: idx for idx, node in enumerate(all_nodes)}
     index_to_node = all_nodes
     
-    # 优化3: 预分配列表大小，避免动态扩展
+    # Optimization 3: Pre-allocate list size, avoid dynamic expansion
     if g.is_directed():
         edges = list(g.edges(data=True))
         n_edges = len(edges)
@@ -31,13 +31,13 @@ def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
         receivers = [0] * n_edges
         weights_list = [1.0] * n_edges
         
-        # 优化4: 使用enumerate避免重复查找
+        # Optimization 4: Use enumerate to avoid repeated lookups
         for i, (u, v, d) in enumerate(edges):
             senders[i] = node_to_index[u]
             receivers[i] = node_to_index[v]
             weights_list[i] = d.get('weight', 1.0)
     else:
-        # 优化5: 对于无向图，预分配双倍大小
+        # Optimization 5: For undirected graphs, pre-allocate double size
         edges = list(g.edges(data=True))
         n_edges = len(edges) * 2
         senders = [0] * n_edges
@@ -49,7 +49,7 @@ def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
             v_idx = node_to_index[v]
             weight = data.get('weight', 1.0)
             
-            # 添加双向边
+            # Add bidirectional edges
             senders[i*2] = u_idx
             receivers[i*2] = v_idx
             weights_list[i*2] = weight
@@ -58,27 +58,27 @@ def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
             receivers[i*2 + 1] = u_idx
             weights_list[i*2 + 1] = weight
 
-    # 优化6: 批量转换为JAX数组
+    # Optimization 6: Batch convert to JAX arrays
     senders = jnp.array(senders, dtype=jnp.int32)
     receivers = jnp.array(receivers, dtype=jnp.int32)
 
-    # 优化7: 更高效的权重处理
+    # Optimization 7: More efficient weight processing
     weights = None
     if any(w != 1.0 for w in weights_list):
         weights = jnp.array(weights_list, dtype=jnp.float32)
 
-    # 优化8: 更高效的节点特征提取
+    # Optimization 8: More efficient node feature extraction
     node_features = None
     if node_feature_key and g.nodes:
         try:
-            # 优化9: 直接访问节点数据，避免重复查找
+            # Optimization 9: Direct access to node data, avoid repeated lookups
             nodes_data = dict(g.nodes(data=True))
             if node_feature_key in next(iter(nodes_data.values())):
                 node_features_list = [nodes_data[node].get(node_feature_key, 0) for node in all_nodes]
                 
-                # 优化10: 更高效的字符串编码
+                # Optimization 10: More efficient string encoding
                 if node_features_list and isinstance(node_features_list[0], str):
-                    unique_labels = list(dict.fromkeys(node_features_list))  # 保持顺序
+                    unique_labels = list(dict.fromkeys(node_features_list))  # Maintain order
                     label_map = {label: i for i, label in enumerate(unique_labels)}
                     encoded_features = [label_map[label] for label in node_features_list]
                     node_features = jnp.array(encoded_features)
@@ -88,7 +88,7 @@ def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
                 if node_features.ndim == 1:
                     node_features = node_features[:, None]
         except (KeyError, TypeError) as e:
-            warnings.warn(f"警告: 提取或转换特征时出错: {e}。未提取节点特征。")
+            warnings.warn(f"Warning: Error extracting or converting features: {e}. Node features not extracted.")
 
     return Graph(
         senders=senders,
@@ -102,18 +102,18 @@ def from_networkx(g: nx.Graph, node_feature_key: Optional[str] = None) -> Graph:
     )
 
 def from_json(file_path: str) -> Graph:
-    """从 JSON 文件加载图。"""
+    """Load graph from JSON file."""
     with open(file_path, 'r') as f:
         data = json.load(f)
 
     n_nodes = len(data['nodes'])
     
-    # 提取边
+    # Extract edges
     senders = jnp.array([link['source'] for link in data['links']], dtype=jnp.int32)
     receivers = jnp.array([link['target'] for link in data['links']], dtype=jnp.int32)
-    n_edges = len(senders) # <--- 计算边的数量
+    n_edges = len(senders) # <--- Calculate number of edges
     
-    # 提取权重 (如果存在)
+    # Extract weights (if they exist)
     if data['links'] and 'weight' in data['links'][0]:
         weights = jnp.array([link['weight'] for link in data['links']], dtype=jnp.float32)
     else:
@@ -125,28 +125,28 @@ def from_json(file_path: str) -> Graph:
             features_list = [jnp.atleast_1d(node['features']) for node in data['nodes']]
             node_features = jnp.stack(features_list)
         except (KeyError, TypeError):
-            warnings.warn("警告: 并非所有节点都有 'features' 字段或格式不正确。未提取节点特征。")
+            warnings.warn("Warning: Not all nodes have 'features' field or format is incorrect. Node features not extracted.")
 
     return Graph(
         senders=senders,
         receivers=receivers,
         edge_weights=weights,
         n_nodes=n_nodes,
-        n_edges=n_edges, # <--- 传入 n_edges
+        n_edges=n_edges, # <--- Pass n_edges
         node_features=node_features
     )
 
 def from_csv(file_path: str) -> Graph:
-    """从 CSV 文件加载图。"""
+    """Load graph from CSV file."""
     try:
-        # 尝试读取，允许不均匀的行
+        # Try to read, allowing uneven rows
         with open(file_path, 'r') as f:
             reader = csv.reader(f)
-            next(reader)  # 跳过表头
+            next(reader)  # Skip header
             edges_list = [row for row in reader if row]
         
         if not edges_list:
-            # 处理空文件的情况
+            # Handle empty file case
             return Graph(
                 senders=jnp.array([], dtype=jnp.int32),
                 receivers=jnp.array([], dtype=jnp.int32),
@@ -159,26 +159,26 @@ def from_csv(file_path: str) -> Graph:
         edges = np.array(edges_list, dtype=float)
 
     except (IOError, ValueError) as e:
-        print(f"读取 CSV 文件时出错: {e}")
+        print(f"Error reading CSV file: {e}")
         return None
 
     senders = jnp.array(edges[:, 0], dtype=jnp.int32)
     receivers = jnp.array(edges[:, 1], dtype=jnp.int32)
-    n_edges = len(senders) # <--- 计算边的数量
+    n_edges = len(senders) # <--- Calculate number of edges
     
-    # 假定第三列是权重 (如果存在)
+    # Assume third column is weight (if it exists)
     if edges.shape[1] > 2:
         weights = jnp.array(edges[:, 2], dtype=jnp.float32)
     else:
         weights = jnp.ones(n_edges, dtype=jnp.float32)
 
-    # 从边推断节点数 (处理图中可能存在的孤立节点)
+    # Infer number of nodes from edges (handle isolated nodes that may exist in the graph)
     if n_edges > 0:
         n_nodes = int(jnp.maximum(jnp.max(senders), jnp.max(receivers))) + 1
     else:
         n_nodes = 0
     
-    # CSV 格式通常不包含节点特征，所以设为 None
+    # CSV format usually doesn't contain node features, so set to None
     node_features = None
     
     return Graph(
@@ -186,12 +186,12 @@ def from_csv(file_path: str) -> Graph:
         receivers=receivers,
         edge_weights=weights,
         n_nodes=n_nodes,
-        n_edges=n_edges, # <--- 传入 n_edges
+        n_edges=n_edges, # <--- Pass n_edges
         node_features=node_features
     )
 
 def to_networkx(graph: Graph, node_feature_key: str = "features", create_using: Optional[Type[nx.Graph]] = None) -> nx.Graph:
-    """将稀疏 JAX Graph 对象转换回 NetworkX Graph。"""
+    """Convert sparse JAX Graph object back to NetworkX Graph."""
     g = create_using() if create_using else nx.Graph()
     g.add_nodes_from(range(graph.n_nodes))
     
@@ -209,7 +209,7 @@ def to_networkx(graph: Graph, node_feature_key: str = "features", create_using: 
     return g
 
 def to_json(graph: Graph, file_path: str):
-    """将稀疏 JAX Graph 对象保存为 JSON 文件 (node-link format)。"""
+    """Save sparse JAX Graph object as JSON file (node-link format)."""
     nodes_list = []
     for i in range(graph.n_nodes):
         node_data = {"id": i}
@@ -231,22 +231,22 @@ def to_json(graph: Graph, file_path: str):
         json.dump({"nodes": nodes_list, "links": links_list}, f, indent=2)
 
 def to_csv(graph: Graph, file_path: str):
-    """将图的边列表保存到 CSV 文件。"""
+    """Save graph edge list to CSV file."""
     header = ['source', 'target', 'weight']
     with open(file_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(header)
         
-        # 修正: 先将 JAX 数组转换为 NumPy 数组
+        # Fix: Convert JAX arrays to NumPy arrays first
         senders_np = np.asarray(graph.senders)
         receivers_np = np.asarray(graph.receivers)
 
-        # 检查是否有权重
+        # Check if weights exist
         if graph.edge_weights is not None:
             weights_np = np.asarray(graph.edge_weights)
             rows = np.stack([senders_np, receivers_np, weights_np], axis=1)
         else:
-            # 如果没有权重，只写入源和目标
+            # If no weights, only write source and target
             header = ['source', 'target']
             rows = np.stack([senders_np, receivers_np], axis=1)
         

@@ -5,16 +5,16 @@ from typing import Optional, Sequence, Union
 from functools import partial
 from .matrix import steady_state
 
-# 优化的图操作函数，使用 JAX 原生操作
+# Optimized graph operation functions using JAX native operations
 @jax.jit
 def compute_node_degrees(graph: Graph) -> jnp.ndarray:
     """
-    计算节点度数 - 使用 JAX 原生操作
+    Compute node degrees - using JAX native operations
     """
     n_nodes = graph.n_nodes
     degrees = jnp.zeros(n_nodes, dtype=jnp.int32)
     
-    # 使用 scatter_add 计算度数
+    # Use scatter_add to compute degrees
     degrees = degrees.at[graph.senders].add(1)
     degrees = degrees.at[graph.receivers].add(1)
     
@@ -23,10 +23,10 @@ def compute_node_degrees(graph: Graph) -> jnp.ndarray:
 @jax.jit
 def compute_edge_capacities(graph: Graph, capacity_func=None) -> jnp.ndarray:
     """
-    计算边容量 - 使用 JAX 原生操作
+    Compute edge capacities - using JAX native operations
     """
     if capacity_func is None:
-        # 默认容量函数：基于节点度数
+        # Default capacity function: based on node degrees
         degrees = compute_node_degrees(graph)
         sender_degrees = degrees[graph.senders]
         receiver_degrees = degrees[graph.receivers]
@@ -37,7 +37,7 @@ def compute_edge_capacities(graph: Graph, capacity_func=None) -> jnp.ndarray:
 @jax.jit
 def create_layer_masks(n_nodes: int, ref_ratio: float = 0.33, term_ratio: float = 0.33) -> tuple:
     """
-    创建网络层掩码 - 使用 JAX 原生操作
+    Create network layer masks - using JAX native operations
     """
     n_ref = int(n_nodes * ref_ratio)
     n_term = int(n_nodes * term_ratio)
@@ -51,7 +51,7 @@ def create_layer_masks(n_nodes: int, ref_ratio: float = 0.33, term_ratio: float 
 @jax.jit
 def compute_layer_statistics(graph: Graph, ref_mask: jnp.ndarray, term_mask: jnp.ndarray, gas_mask: jnp.ndarray) -> dict:
     """
-    计算网络层统计信息 - 使用 JAX 原生操作
+    Compute network layer statistics - using JAX native operations
     """
     degrees = compute_node_degrees(graph)
     
@@ -75,8 +75,8 @@ def compute_layer_statistics(graph: Graph, ref_mask: jnp.ndarray, term_mask: jnp
 @jax.jit
 def gemm(a: jnp.ndarray, b: jnp.ndarray) -> jnp.ndarray:
     """
-    通用矩阵乘法 (General Matrix Multiplication, GEMM)。
-    这是一个对 jnp.matmul 的简单封装，以保持 API 的一致性。
+    General Matrix Multiplication (GEMM).
+    This is a simple wrapper around jnp.matmul to maintain API consistency.
     """
     return a @ b
 
@@ -88,26 +88,26 @@ def conv(
     padding: str
 ) -> jnp.ndarray:
     """
-    通用的 N-D 卷积算子。
-    这是一个对 jax.lax.conv_general_dilated 的封装，以简化常用的 2D 卷积。
+    Generic N-D convolution operator.
+    This is a wrapper around jax.lax.conv_general_dilated to simplify common 2D convolution.
 
     Args:
-        inputs (jnp.ndarray): 输入张量，通常形状为 (N, H, W, C_in)。
-        kernel (jnp.ndarray): 卷积核，通常形状为 (H_k, W_k, C_in, C_out)。
-        strides (Union[int, Sequence[int]]): 步长。
-        padding (str): 填充模式，'SAME' 或 'VALID'。
+        inputs (jnp.ndarray): Input tensor, typically shape (N, H, W, C_in).
+        kernel (jnp.ndarray): Convolution kernel, typically shape (H_k, W_k, C_in, C_out).
+        strides (Union[int, Sequence[int]]): Stride.
+        padding (str): Padding mode, 'SAME' or 'VALID'.
 
     Returns:
-        jnp.ndarray: 卷积后的输出张量。
+        jnp.ndarray: Convolved output tensor.
     """
     if isinstance(strides, int):
         strides = (strides, strides)
         
-    # JAX 的底层 API 需要更详细的维度信息
+    # JAX's low-level API requires more detailed dimension information
     dn = jax.lax.conv_dimension_numbers(
-        inputs.shape,     # 输入形状
-        kernel.shape,     # 核形状
-        ('NHWC', 'HWIO', 'NHWC')  # (输入格式, 核格式, 输出格式)
+        inputs.shape,     # Input shape
+        kernel.shape,     # Kernel shape
+        ('NHWC', 'HWIO', 'NHWC')  # (Input format, kernel format, output format)
     )
 
     return jax.lax.conv_general_dilated(
@@ -126,16 +126,16 @@ def conv_1x1(
     padding: str = 'SAME'
 ) -> jnp.ndarray:
     """
-    1x1 卷积。通常用于跨通道混合信息或调整通道数。
+    1x1 convolution. Usually used for cross-channel mixing information or adjusting channel count.
     
     Args:
-        inputs (jnp.ndarray): 输入张量 (N, H, W, C_in)。
-        kernel (jnp.ndarray): 卷积核，必须为 (1, 1, C_in, C_out)。
-        strides (Union[int, Sequence[int]]): 步长。
-        padding (str): 填充模式。
+        inputs (jnp.ndarray): Input tensor (N, H, W, C_in).
+        kernel (jnp.ndarray): Convolution kernel, must be (1, 1, C_in, C_out).
+        strides (Union[int, Sequence[int]]): Stride.
+        padding (str): Padding mode.
 
     Returns:
-        jnp.ndarray: 卷积后的输出张量。
+        jnp.ndarray: Convolved output tensor.
     """
     assert kernel.shape[:2] == (1, 1), "Kernel for conv_1x1 must have shape (1, 1, ...)"
     return conv(inputs, kernel, strides, padding)
@@ -148,16 +148,16 @@ def conv_3x3(
     padding: str = 'SAME'
 ) -> jnp.ndarray:
     """
-    3x3 卷积。CNN 中最常用的特征提取器。
+    3x3 convolution. The most commonly used feature extractor in CNNs.
 
     Args:
-        inputs (jnp.ndarray): 输入张量 (N, H, W, C_in)。
-        kernel (jnp.ndarray): 卷积核，必须为 (3, 3, C_in, C_out)。
-        strides (Union[int, Sequence[int]]): 步长。
-        padding (str): 填充模式。
+        inputs (jnp.ndarray): Input tensor (N, H, W, C_in).
+        kernel (jnp.ndarray): Convolution kernel, must be (3, 3, C_in, C_out).
+        strides (Union[int, Sequence[int]]): Stride.
+        padding (str): Padding mode.
 
     Returns:
-        jnp.ndarray: 卷积后的输出张量。
+        jnp.ndarray: Convolved output tensor.
     """
     assert kernel.shape[:2] == (3, 3), "Kernel for conv_3x3 must have shape (3, 3, ...)"
     return conv(inputs, kernel, strides, padding)

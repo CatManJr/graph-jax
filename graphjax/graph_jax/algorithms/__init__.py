@@ -8,7 +8,7 @@ from .capacity import (
     batch_steady_state,
     batch_failure_time
 )
-from .shortest_path import (
+from .floyd_warshall import (
     shortest_paths,
     single_source_shortest_paths,
     path_exists,

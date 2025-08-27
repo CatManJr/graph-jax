@@ -286,10 +286,10 @@ def compute_capacity_params_networkx(G, ref_mask, term_mask, gas_mask):
     w13_time = time.time() - start_time
     print(f"W13 computed in {w13_time:.2f}s: {W13:.2f}")
     
-    # 道路网络特定的容量常数
-    C1, C2, C3 = 50.0, 100.0, 200.0  # 调整为道路网络合适的值
-    
-    # 计算参数
+        # Road network specific capacity constants
+    C1, C2, C3 = 50.0, 100.0, 200.0  # Adjusted to values suitable for road networks
+
+    # Calculate parameters
     s12 = W12 / (N1 * C1 + 1e-8)
     s23 = W23 / (N2 * C2 + 1e-8)
     s13 = W13 / (N1 * C1 + 1e-8)
@@ -302,8 +302,8 @@ def compute_capacity_params_networkx(G, ref_mask, term_mask, gas_mask):
         'W12': W12, 'W23': W23, 'W13': W13,
         's12': s12, 's23': s23, 's13': s13,
         'alpha12': alpha12, 'alpha23': alpha23,
-        'p': 0.1,   # 道路网络生产率（较低）
-        'd': 0.05   # 道路网络消耗率（较低）
+        'p': 0.1,   # Road network production rate (lower)
+        'd': 0.05   # Road network consumption rate (lower)
     }
 
 def compute_steady_state_scipy(params):
@@ -428,7 +428,7 @@ def main():
             print(f"  Steady state: {jax_steady_time:.3f}s")
             print(f"  Failure time: {jax_failure_time:.3f}s")
             print(f"  Total: {conversion_time + jax_capacity_time + jax_steady_time + jax_failure_time:.3f}s")
-            print(f"  Graph: {g}")  # 使用新的字符串表示
+            print(f"  Graph: {g}")  # Use new string representation
             print(f"  s12={params_jax['s12']:.4f}, s23={params_jax['s23']:.4f}, s13={params_jax['s13']:.4f}")
             print(f"  Steady: {y_steady_jax}")
             print(f"  Failure: τ={τ_jax:.2f}d, QD={QD_jax:.3f}")

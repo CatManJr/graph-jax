@@ -172,24 +172,24 @@ def comprehensive_timing_analysis():
 
 def detailed_algorithm_analysis():
     """
-    详细分析 JAX 和 NetworkX PageRank 算法的迭代过程，确保计时公平性。
+    Detailed analysis of JAX and NetworkX PageRank algorithm iteration process, ensuring fair timing.
     """
-    print("=== 详细算法分析：验证计时公平性 ===\n")
+    print("=== Detailed Algorithm Analysis: Verifying Fair Timing ===\n")
     
     file_path = 'web-Google.txt'
     if not os.path.exists(file_path):
         print(f"Dataset file not found: {file_path}")
         return
 
-    # 加载图
-    print("加载图数据...")
+    # Load graph
+    print("Loading graph data...")
     nx_g_real = nx.read_edgelist(file_path, comments='#', create_using=nx.DiGraph(), nodetype=int)
     jax_g_real = from_networkx(nx_g_real)
-    print(f"图规模: {nx_g_real.number_of_nodes()} 节点, {nx_g_real.number_of_edges()} 边\n")
+    print(f"Graph scale: {nx_g_real.number_of_nodes()} nodes, {nx_g_real.number_of_edges()} edges\n")
 
-    # 1. 创建一个修改版本的 JAX PageRank 来记录迭代次数
+    # 1. Create a modified version of JAX PageRank to record iteration count
     def pagerank_with_iteration_count(graph, damping_factor=0.85, max_iterations=100, tolerance=1e-06):
-        """修改版 PageRank，记录迭代次数"""
+        """Modified PageRank that records iteration count"""
         n_nodes = graph.n_nodes
         if n_nodes == 0:
             return jnp.array([]), 0
@@ -231,32 +231,32 @@ def detailed_algorithm_analysis():
             (jnp.zeros_like(pr), pr, 0)
         )
         
-        return final_state[1], final_state[2]  # 返回结果和迭代次数
+        return final_state[1], final_state[2]  # Return result and iteration count
     
-    # 预热 JAX
-    print("预热 JAX...")
+    # Warm up JAX
+    print("Warming up JAX...")
     pagerank(jax_g_real).block_until_ready()
     
-    # 2. 测试 JAX PageRank 并记录迭代次数
-    print("--- JAX PageRank 详细分析 ---")
+    # 2. Test JAX PageRank and record iteration count
+    print("--- JAX PageRank Detailed Analysis ---")
     start_time = time.perf_counter()
     jax_pr_result, jax_iterations = pagerank_with_iteration_count(jax_g_real, tolerance=1e-6)
     jax_time = time.perf_counter() - start_time
     
     print(f"JAX PageRank:")
-    print(f"  执行时间: {jax_time:.4f}s")
-    print(f"  迭代次数: {jax_iterations}")
-    print(f"  每次迭代平均时间: {jax_time/jax_iterations:.6f}s")
-    print(f"  最终误差估计: 收敛到容忍度 1e-6")
+    print(f"  Execution time: {jax_time:.4f}s")
+    print(f"  Iteration count: {jax_iterations}")
+    print(f"  Average time per iteration: {jax_time/jax_iterations:.6f}s")
+    print(f"  Final error estimate: Converged to tolerance 1e-6")
     
-    # 3. 测试 NetworkX PageRank 并尝试获取迭代信息
-    print(f"\n--- NetworkX PageRank 详细分析 ---")
+    # 3. Test NetworkX PageRank and try to get iteration information
+    print(f"\n--- NetworkX PageRank Detailed Analysis ---")
     
-    # NetworkX 的 pagerank 函数参数
+    # NetworkX pagerank function parameters
     nx_params = {
-        'alpha': 0.85,  # 对应 damping_factor
-        'tol': 1e-6,    # 对应 tolerance
-        'max_iter': 100  # 对应 max_iterations
+        'alpha': 0.85,  # Corresponds to damping_factor
+        'tol': 1e-6,    # Corresponds to tolerance
+        'max_iter': 100  # Corresponds to max_iterations
     }
     
     start_time = time.perf_counter()
@@ -264,23 +264,23 @@ def detailed_algorithm_analysis():
     nx_time = time.perf_counter() - start_time
     
     print(f"NetworkX PageRank:")
-    print(f"  执行时间: {nx_time:.4f}s")
-    print(f"  配置参数: alpha={nx_params['alpha']}, tol={nx_params['tol']}, max_iter={nx_params['max_iter']}")
-    print(f"  注: NetworkX 不直接返回迭代次数")
+    print(f"  Execution time: {nx_time:.4f}s")
+    print(f"  Configuration parameters: alpha={nx_params['alpha']}, tol={nx_params['tol']}, max_iter={nx_params['max_iter']}")
+    print(f"  Note: NetworkX does not directly return iteration count")
     
-    # 4. 手动实现一个简单的 PageRank 来验证迭代次数
-    print(f"\n--- 手动 Python PageRank 验证 ---")
+    # 4. Manually implement a simple PageRank to verify iteration count
+    print(f"\n--- Manual Python PageRank Verification ---")
     
     def manual_pagerank_python(graph, damping_factor=0.85, tolerance=1e-6, max_iterations=100):
-        """纯 Python 实现的 PageRank，用于验证迭代次数"""
+        """Pure Python implementation of PageRank for verifying iteration count"""
         nodes = list(graph.nodes())
         n = len(nodes)
         node_to_idx = {node: i for i, node in enumerate(nodes)}
         
-        # 初始化
+        # Initialize
         pr = np.ones(n) / n
         
-        # 计算出度
+        # Calculate out-degrees
         out_degree = np.zeros(n)
         edges_list = []
         for u, v in graph.edges():
@@ -289,24 +289,24 @@ def detailed_algorithm_analysis():
             edges_list.append((u_idx, v_idx))
             out_degree[u_idx] += 1
         
-        # 迭代
+        # Iterate
         for iteration in range(max_iterations):
             prev_pr = pr.copy()
             new_pr = np.ones(n) * (1 - damping_factor) / n
             
-            # 处理每条边
+            # Process each edge
             for u_idx, v_idx in edges_list:
                 if out_degree[u_idx] > 0:
                     new_pr[v_idx] += damping_factor * prev_pr[u_idx] / out_degree[u_idx]
             
-            # 处理悬空节点
+            # Handle dangling nodes
             dangling_sum = sum(prev_pr[i] for i in range(n) if out_degree[i] == 0)
             new_pr += damping_factor * dangling_sum / n
             
-            # 归一化
+            # Normalize
             new_pr = new_pr / np.sum(new_pr)
             
-            # 检查收敛
+            # Check convergence
             diff = np.sum(np.abs(new_pr - prev_pr))
             if diff < n * tolerance:
                 return new_pr, iteration + 1
@@ -315,7 +315,7 @@ def detailed_algorithm_analysis():
         
         return pr, max_iterations
     
-    # 在一个小子图上测试（因为纯 Python 很慢）
+    # Test on a small subgraph (because pure Python is slow)
     subset_nodes = sorted(list(nx_g_real.nodes()))[:1000]
     nx_subset = nx_g_real.subgraph(subset_nodes).copy()
     
@@ -323,38 +323,38 @@ def detailed_algorithm_analysis():
     manual_pr, manual_iterations = manual_pagerank_python(nx_subset, tolerance=1e-6)
     manual_time = time.perf_counter() - start_time
     
-    print(f"手动 Python PageRank (子图 {nx_subset.number_of_nodes()} 节点):")
-    print(f"  执行时间: {manual_time:.4f}s")
-    print(f"  迭代次数: {manual_iterations}")
-    print(f"  每次迭代平均时间: {manual_time/manual_iterations:.6f}s")
+    print(f"Manual Python PageRank (subgraph {nx_subset.number_of_nodes()} nodes):")
+    print(f"  Execution time: {manual_time:.4f}s")
+    print(f"  Iteration count: {manual_iterations}")
+    print(f"  Average time per iteration: {manual_time/manual_iterations:.6f}s")
     
-    # 5. 计算理论上的操作数量
-    print(f"\n--- 理论计算复杂度分析 ---")
+    # 5. Calculate theoretical operation count
+    print(f"\n--- Theoretical Computational Complexity Analysis ---")
     n_nodes = nx_g_real.number_of_nodes()
     n_edges = nx_g_real.number_of_edges()
     
-    # 每次 PageRank 迭代的操作数
-    ops_per_iteration = n_edges * 3 + n_nodes * 5  # 粗略估计
+    # Operations per PageRank iteration
+    ops_per_iteration = n_edges * 3 + n_nodes * 5  # Rough estimate
     total_ops_jax = ops_per_iteration * int(jax_iterations)
     
-    print(f"每次迭代估计操作数: {ops_per_iteration:,}")
-    print(f"JAX 总操作数: {total_ops_jax:,}")
-    print(f"JAX 操作速度: {total_ops_jax/jax_time/1e9:.2f} GOPS")
+    print(f"Estimated operations per iteration: {ops_per_iteration:,}")
+    print(f"JAX total operations: {total_ops_jax:,}")
+    print(f"JAX operation speed: {total_ops_jax/jax_time/1e9:.2f} GOPS")
     
-    # 6. 最终结论
-    print(f"\n--- 计时公平性结论 ---")
+    # 6. Final conclusions
+    print(f"\n--- Timing Fairness Conclusions ---")
     speedup = nx_time / jax_time
-    print(f"✅ JAX 迭代次数: {jax_iterations} (完整收敛过程)")
-    print(f"✅ NetworkX 也运行完整收敛过程")
-    print(f"✅ 两者使用相同参数: damping_factor=0.85, tolerance=1e-6")
-    print(f"✅ 计时包含完整算法执行，不只是单次操作")
-    print(f"🚀 真实加速比: {speedup:.1f}x")
+    print(f"✅ JAX iteration count: {jax_iterations} (complete convergence process)")
+    print(f"✅ NetworkX also runs complete convergence process")
+    print(f"✅ Both use same parameters: damping_factor=0.85, tolerance=1e-6")
+    print(f"✅ Timing includes complete algorithm execution, not just single operations")
+    print(f"🚀 Real speedup: {speedup:.1f}x")
     
     if speedup > 50:
-        print(f"\n💡 {speedup:.1f}x 加速比是真实的，原因:")
-        print("   • JAX: JIT 编译 + 向量化操作 + 硬件优化")
-        print("   • NetworkX: 纯 Python 解释执行 + 循环开销")
-        print("   • 大规模矩阵运算特别适合 JAX 优化")
+        print(f"\n💡 {speedup:.1f}x speedup is real, reasons:")
+        print("   • JAX: JIT compilation + vectorized operations + hardware optimization")
+        print("   • NetworkX: Pure Python interpreted execution + loop overhead")
+        print("   • Large-scale matrix operations particularly suitable for JAX optimization")
     
     return jax_time, nx_time, speedup, int(jax_iterations)
 

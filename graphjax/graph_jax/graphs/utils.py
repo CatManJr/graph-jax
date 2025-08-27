@@ -4,35 +4,35 @@ from .graph import Graph
 
 def batch_graphs(graph_list: List[Graph]) -> Graph:
     """
-    将一个图的列表批处理成一个单一的、填充过的图对象，以便于 vmap 处理。
+    Batch a list of graphs into a single, padded graph object for vmap processing.
 
-    这个函数会自动计算批中最大的节点和边的数量，然后将所有图
-    填充到这个大小，并生成相应的掩码。
+    This function automatically calculates the maximum number of nodes and edges in the batch,
+    then pads all graphs to this size and generates corresponding masks.
 
     Args:
-        graph_list (List[Graph]): 一个包含 Graph 对象的 Python 列表。
+        graph_list (List[Graph]): A Python list containing Graph objects.
 
     Returns:
-        Graph: 一个代表整个批次的单一 Graph 对象。
+        Graph: A single Graph object representing the entire batch.
     """
     if not graph_list:
-        raise ValueError("图列表不能为空。")
+        raise ValueError("Graph list cannot be empty.")
 
-    # 1. 确定批处理维度和填充大小
+    # 1. Determine batch dimensions and padding sizes
     batch_size = len(graph_list)
     max_n_nodes = max(g.n_nodes for g in graph_list)
     max_n_edges = max(g.n_edges for g in graph_list)
     
-    # 假设所有图的特征维度都相同
+    # Assume all graphs have the same feature dimensions
     has_features = graph_list[0].node_features is not None
     if has_features:
         feature_dim = graph_list[0].node_features.shape[1]
 
-    # 2. 初始化用于存储填充后数据的列表
+    # 2. Initialize lists to store padded data
     all_senders, all_receivers, all_weights, all_features = [], [], [], []
     all_node_masks, all_edge_masks = [], []
 
-    # 3. 遍历每个图，进行填充并创建掩码
+    # 3. Iterate through each graph, pad and create masks
     for g in graph_list:
         n_edge_pad = max_n_edges - g.n_edges
         all_senders.append(jnp.pad(g.senders, (0, n_edge_pad)))
@@ -48,7 +48,7 @@ def batch_graphs(graph_list: List[Graph]) -> Graph:
         all_node_masks.append(jnp.arange(max_n_nodes) < g.n_nodes)
         all_edge_masks.append(jnp.arange(max_n_edges) < g.n_edges)
 
-    # 4. 将填充后的数据堆叠成一个批处理
+    # 4. Stack the padded data into a batch
     return Graph(
         senders=jnp.stack(all_senders),
         receivers=jnp.stack(all_receivers),

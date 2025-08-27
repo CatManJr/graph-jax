@@ -3,7 +3,7 @@ import jax.numpy as jnp
 from jax.experimental.sparse import BCOO
 from functools import partial
 from ..graphs import Graph
-from ..kernels.min_cut import min_cut_matrix, min_cut_matrix_optimized
+from ..kernels.min_cut import min_cut_matrix_optimized
 
 @partial(jax.jit, static_argnames=('use_parallel',))
 def capacity_params(
@@ -19,9 +19,9 @@ def capacity_params(
     use_parallel: bool = False
 ) -> dict:
     """
-    使用XLA优化的capacity参数计算。
-    使用最小割算法计算层间连接，完全符合论文描述。
-    支持并行计算以提高大规模图的性能。
+    Compute capacity parameters using XLA-optimized routines.
+    Inter-layer connections are computed using the min-cut algorithm, fully consistent with the paper.
+    Parallel computation is supported to improve performance on large-scale graphs.
     """
     alive = g.node_mask if g.node_mask is not None else jnp.ones(g.n_nodes, dtype=bool)
 
@@ -29,20 +29,20 @@ def capacity_params(
     N2 = jnp.sum(alive * term_mask)
     N3 = jnp.sum(alive * gas_mask)
 
-    # 创建稀疏邻接矩阵
+    # Create sparse adjacency matrix
     capacities = jnp.full(g.n_edges, edge_cap, dtype=jnp.float32)
     coo = BCOO((capacities, jnp.stack([g.senders, g.receivers], axis=1)),
                shape=(g.n_nodes, g.n_nodes))
     
-    # 使用优化的最小割算法计算层间连接，完全符合论文描述
-    # 当图规模超过阈值时自动使用并行版本
-    # 计算从ref到term的最小割容量
+    # Compute inter-layer connections using the optimized min-cut algorithm, fully consistent with the paper
+    # Automatically use the parallel version when the graph size exceeds the threshold
+    # Compute min-cut capacity from ref to term
     W12 = min_cut_matrix_optimized(coo, ref_mask, term_mask, use_parallel)
     
-    # 计算从term到gas的最小割容量
+    # Compute min-cut capacity from term to gas
     W23 = min_cut_matrix_optimized(coo, term_mask, gas_mask, use_parallel)
     
-    # 计算从ref到gas的最小割容量
+    # Compute min-cut capacity from ref to gas
     W13 = min_cut_matrix_optimized(coo, ref_mask, gas_mask, use_parallel)
 
     s12 = W12 / (N1 * C1 + 1e-8)
@@ -57,7 +57,7 @@ def capacity_params(
                 alpha12=alpha12, alpha23=alpha23,
                 p=0.42, d=0.79)
 
-# JIT编译的capacity算法
+# JIT-compiled capacity algorithm
 capacity_params_jit = jax.jit(capacity_params)
 batch_capacity_params = jax.vmap(capacity_params_jit, in_axes=(None, 0, 0, 0))
 
@@ -68,7 +68,7 @@ def steady_state(
     n_steps: int = 200
 ) -> jnp.ndarray:
     """
-    使用SciPy ODE求解器计算系统的稳态。
+    Compute the system steady state using the SciPy ODE solver.
     
     TODO: Replace with fast JAX-native ODE solver when stable and mature.
     Currently using SciPy for consistency and stability.
@@ -81,9 +81,11 @@ def steady_state(
         p, d, s12, s23, s13 = params["p"], params["d"], params["s12"], params["s23"], params["s13"]
         a12, a23 = params["alpha12"], params["alpha23"]
 
-        dy1 = p - s12 * y1 * y2 - s13 * y1 * y3
-        dy2 = s12 / a12 * y1 * y2 - s23 * y2 * y3
-        dy3 = -d * y3 + s13 / (a12 * a23) * y1 * y3 + s23 / a23 * y2 * y3
+            # ODE system according to paper formula (13)
+    # Assume Π(y₁) = y₁, Δ(y₃) = y₃, Ψ(y_q, y_r) = y_q * y_r
+        dy1 = p * y1 - s12 * y1 * y2 - s13 * y1 * y3
+        dy2 = (s12 / a12) * y1 * y2 - s23 * y2 * y3
+        dy3 = -d * y3 + (s13 / (a12 * a23)) * y1 * y3 + (s23 / a23) * y2 * y3
         return [dy1, dy2, dy3]
 
     y0 = [1.0, 1.0, 1.0]
@@ -95,17 +97,26 @@ def steady_state(
 
 def failure_time(params: dict, ΔT: float) -> tuple:
     """
-    计算生产中断后的系统失败时间和平均需求水平。
+    Compute the system failure time and average demand level after production interruption.
     
     TODO: Make this JIT-compilable when ODE solver is replaced with JAX-native version.
     """
     y_steady = steady_state(params)
     y3_0 = float(y_steady[2])  # Convert to Python float for compatibility
-    d = float(params["d"])
+    p = float(params["p"])     # Production rate
+    d = float(params["d"])     # Demand rate
     
     import numpy as np
-    τ = min(ΔT, y3_0 / d)
-    QD = 1.0 if τ >= ΔT else (y3_0 - 0.5 * d * τ) / y3_0
+    
+    # Check if system is stable (production >= demand)
+    if p >= d:
+        # System is stable, no failure
+        τ = ΔT
+        QD = 1.0
+    else:
+        # System will fail, calculate failure time
+        τ = min(ΔT, y3_0 / d)
+        QD = 1.0 if τ >= ΔT else (y3_0 - 0.5 * d * τ) / y3_0
     
     # Convert back to JAX arrays for consistency
     return jnp.array(τ), jnp.array(QD)
@@ -113,7 +124,7 @@ def failure_time(params: dict, ΔT: float) -> tuple:
 # Batch computation functions
 def batch_steady_state(params_array: list, *, t_max: float = 50.0, n_steps: int = 200) -> jnp.ndarray:
     """
-    批量稳态计算。
+    Batch steady state computation.
     
     TODO: Optimize with JAX vmap when ODE solver is replaced with JAX-native version.
     Currently using Python loop for compatibility with SciPy.
@@ -126,7 +137,7 @@ def batch_steady_state(params_array: list, *, t_max: float = 50.0, n_steps: int 
 
 def batch_failure_time(params_array: list, ΔT: float) -> tuple:
     """
-    批量失败时间计算。
+    Batch failure time computation.
     
     TODO: Optimize with JAX vmap when functions are JIT-compilable.
     """
@@ -137,4 +148,3 @@ def batch_failure_time(params_array: list, ΔT: float) -> tuple:
         tau_results.append(τ)
         qd_results.append(QD)
     return jnp.stack(tau_results), jnp.stack(qd_results)
-

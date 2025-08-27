@@ -5,22 +5,22 @@ from functools import partial
 from typing import Optional
 from jax.experimental import ode
 
-# --- 内部 JIT 编译的纯函数 ---
+# --- Internal JIT-compiled pure functions ---
 
-# 修改: 将 n_edges 也添加到 static_argnames
+# Modified: Add n_edges to static_argnames as well
 @partial(jax.jit, static_argnames=('n_nodes', 'n_edges', 'as_diagonal'))
 def _degree_matrix_pure(
     receivers: jnp.ndarray, 
-    edge_weights: Optional[jnp.ndarray], # 参数保留，但函数体内不使用
+    edge_weights: Optional[jnp.ndarray], # Parameter kept but not used in function body
     n_nodes: int, 
     n_edges: int,
     as_diagonal: bool
 ) -> jnp.ndarray:
     """
-    纯函数版本的度矩阵计算。
-    修改：此版本计算无权重的度，以匹配 networkx 的默认行为。
+    Pure function version of degree matrix computation.
+    Modified: This version computes unweighted degrees to match networkx's default behavior.
     """
-    # 忽略 edge_weights，为每条边加 1 来计算无权重的度
+    # Ignore edge_weights, add 1 for each edge to compute unweighted degrees
     ones = jnp.ones(n_edges, dtype=jnp.float32)
     degrees = jnp.zeros(n_nodes, dtype=jnp.float32).at[receivers].add(ones)
     return jnp.diag(degrees) if as_diagonal else degrees
@@ -30,7 +30,7 @@ def _laplacian_matrix_pure(
     adj: jnp.ndarray,
     n_nodes: int
 ) -> jnp.ndarray:
-    """纯函数版本的拉普拉斯矩阵计算。"""
+    """Pure function version of Laplacian matrix computation."""
     degrees = jnp.sum(adj, axis=1)
     deg_matrix = jnp.diag(degrees)
     return deg_matrix - adj
@@ -38,24 +38,24 @@ def _laplacian_matrix_pure(
 @partial(jax.jit, static_argnames=('n_nodes', 'add_self_loops'))
 def _normalized_laplacian_sym_pure(adj: jnp.ndarray, n_nodes: int, add_self_loops: bool) -> jnp.ndarray:
     """
-    纯函数：计算对称归一化拉普拉斯矩阵。
-    遵循 NetworkX 的标准定义。
+    Pure function: Compute symmetric normalized Laplacian matrix.
+    Follows NetworkX's standard definition.
     """
-    # 修正: 始终使用原始邻接矩阵计算度，这是标准定义
+    # Fix: Always use original adjacency matrix to compute degrees, this is the standard definition
     degrees = jnp.sum(adj, axis=1)
     
-    # 如果需要，为最终的邻接矩阵添加自环
+    # If needed, add self-loops to the final adjacency matrix
     if add_self_loops:
         adj_processed = adj + jnp.eye(n_nodes)
     else:
         adj_processed = adj
 
-    # 防止除以零
+    # Prevent division by zero
     degrees_inv_sqrt = jnp.where(degrees > 0, 1.0 / jnp.sqrt(degrees), 0)
     D_inv_sqrt = jnp.diag(degrees_inv_sqrt)
     
     # L_sym = I - D^(-1/2) A' D^(-1/2)
-    # 其中 A' 是可能添加了自环的邻接矩阵
+    # where A' is the adjacency matrix that may have self-loops added
     l_sym = jnp.eye(n_nodes) - D_inv_sqrt @ adj_processed @ D_inv_sqrt
     return l_sym
 
@@ -65,12 +65,12 @@ def _random_walk_normalized_laplacian_pure(
     n_nodes: int,
     add_self_loops: bool
 ) -> jnp.ndarray:
-    """纯函数版本的随机游走归一化拉普拉斯矩阵计算 (L_rw = I - D⁻¹A)。"""
+    """Pure function version of random walk normalized Laplacian matrix computation (L_rw = I - D⁻¹A)."""
     if add_self_loops:
         adj += jnp.eye(n_nodes)
     
     degrees = jnp.sum(adj, axis=1)
-    # 防止除以零
+    # Prevent division by zero
     inv_deg = jnp.where(degrees > 0, 1.0 / degrees, 0)
     d_inv = jnp.diag(inv_deg)
 
@@ -78,22 +78,22 @@ def _random_walk_normalized_laplacian_pure(
 
 @partial(jax.jit, static_argnames=('k', 'force_float64'))
 def _laplacian_eigensystem_pure(l_sym: jnp.ndarray, k: int, force_float64: bool) -> tuple[jnp.ndarray, jnp.ndarray]:
-    """纯函数：计算对称矩阵的特征分解。"""
-    # 优化: 根据参数决定是否转换为 float64
+    """Pure function: Compute eigendecomposition of symmetric matrix."""
+    # Optimization: Decide whether to convert to float64 based on parameter
     if force_float64:
         l_sym = l_sym.astype(jnp.float64)
     
-    # 使用 jax.scipy.linalg.eigh 进行高效计算
-    # eigh 假定矩阵是厄米特矩阵 (对于实数矩阵即对称矩阵)
-    # 它返回的特征值是排序好的
+    # Use jax.scipy.linalg.eigh for efficient computation
+    # eigh assumes the matrix is Hermitian (symmetric for real matrices)
+    # It returns eigenvalues in sorted order
     vals, vecs = jnp.linalg.eigh(l_sym)
     return vals[:k], vecs[:, :k]
 
 
-# --- 外部调用的封装函数 ---
+# --- External call wrapper functions ---
 
 def degree_matrix(graph: Graph, as_diagonal: bool = True) -> jnp.ndarray:
-    """计算图的度。"""
+    """Compute graph degrees."""
     return _degree_matrix_pure(
         receivers=graph.receivers,
         edge_weights=graph.edge_weights,
@@ -103,23 +103,23 @@ def degree_matrix(graph: Graph, as_diagonal: bool = True) -> jnp.ndarray:
     )
 
 def laplacian_matrix(graph: Graph) -> jnp.ndarray:
-    """计算图的组合拉普拉斯矩阵 (L = D - A)。"""
+    """Compute the combinatorial Laplacian matrix of the graph (L = D - A)."""
     adj = graph.to_adjacency_matrix()
     return _laplacian_matrix_pure(adj, n_nodes=graph.n_nodes)
 
 def normalized_laplacian_sym(graph: Graph, add_self_loops: bool = True, use_weights: bool = False) -> jnp.ndarray:
     """
-    计算对称归一化拉普拉斯矩阵。
+    Compute symmetric normalized Laplacian matrix.
 
     Args:
-        graph (Graph): 输入图。
-        add_self_loops (bool): 是否在计算前添加自环。
-        use_weights (bool): 是否使用边的权重。默认为 False。
+        graph (Graph): Input graph.
+        add_self_loops (bool): Whether to add self-loops before computation.
+        use_weights (bool): Whether to use edge weights. Default is False.
 
     Returns:
-        jnp.ndarray: 对称归一化拉普拉斯矩阵。
+        jnp.ndarray: Symmetric normalized Laplacian matrix.
     """
-    # 修正: 根据 use_weights 参数选择正确的邻接矩阵
+    # Fix: Choose correct adjacency matrix based on use_weights parameter
     if use_weights:
         adj = graph.to_adjacency_matrix()
     else:
@@ -128,43 +128,43 @@ def normalized_laplacian_sym(graph: Graph, add_self_loops: bool = True, use_weig
 
 def random_walk_normalized_laplacian(graph: Graph, add_self_loops: bool = True) -> jnp.ndarray:
     """
-    计算随机游走归一化拉普拉斯矩阵 (L_rw = I - D⁻¹A)。
+    Compute random walk normalized Laplacian matrix (L_rw = I - D⁻¹A).
 
     Args:
-        graph (Graph): 输入图。
-        add_self_loops (bool): 是否在计算度之前添加自环。
-    
+        graph (Graph): Input graph.
+        add_self_loops (bool): Whether to add self-loops before computing degrees.
+
     Returns:
-        jnp.ndarray: 随机游走归一化拉普拉斯矩阵。
+        jnp.ndarray: Random walk normalized Laplacian matrix.
     """
     adj = graph.to_adjacency_matrix()
     return _random_walk_normalized_laplacian_pure(adj, n_nodes=graph.n_nodes, add_self_loops=add_self_loops)
 
 def laplacian_eigensystem(graph: Graph, k: int, use_weights: bool = False, force_float64: bool = True) -> tuple[jnp.ndarray, jnp.ndarray]:
     """
-    计算对称归一化拉普拉斯矩阵的前 k 个特征值和特征向量。
+    Compute the first k eigenvalues and eigenvectors of the symmetric normalized Laplacian matrix.
 
-    这对于谱聚类、图傅里叶变换等任务至关重要。
+    This is crucial for tasks like spectral clustering, graph Fourier transform, etc.
 
     Args:
-        graph (Graph): 输入图。
-        k (int): 需要计算的最小特征值/向量的数量。
-        use_weights (bool): 是否在计算中使用边的权重。默认为 False。
-        force_float64 (bool): 是否强制使用 float64 进行计算以保证数值精度。
-                              默认为 True 以匹配 SciPy/NumPy 的结果。
-                              在性能敏感的应用中可以设为 False。
+        graph (Graph): Input graph.
+        k (int): Number of smallest eigenvalues/vectors to compute.
+        use_weights (bool): Whether to use edge weights in computation. Default is False.
+        force_float64 (bool): Whether to force float64 computation to ensure numerical precision.
+                              Default is True to match SciPy/NumPy results.
+                              Can be set to False in performance-sensitive applications.
 
     Returns:
-        tuple[jnp.ndarray, jnp.ndarray]: (特征值, 特征向量)
+        tuple[jnp.ndarray, jnp.ndarray]: (eigenvalues, eigenvectors)
     """
-    # 谱分析通常在不带自环的对称归一化拉普拉斯上进行
+    # Spectral analysis is usually performed on symmetric normalized Laplacian without self-loops
     l_sym = normalized_laplacian_sym(graph, add_self_loops=False, use_weights=use_weights)
     return _laplacian_eigensystem_pure(l_sym, k=k, force_float64=force_float64)
 
 # steady state solver for the ODE system
 def steady_state(params, *, t_max=50.0, n_steps=200):
     """
-    使用SciPy ODE求解器计算系统的稳态。
+    Use SciPy ODE solver to compute system steady state.
     
     TODO: Replace with fast JAX-native ODE solver when stable and mature.
     Currently using SciPy for consistency and stability.
@@ -191,7 +191,7 @@ def steady_state(params, *, t_max=50.0, n_steps=200):
 
 def steady_state_batch(params_array, *, t_max=50.0, n_steps=200):
     """
-    批量稳态计算。
+    Batch steady state computation.
     
     TODO: Optimize with JAX vmap when ODE solver is replaced with JAX-native version.
     """

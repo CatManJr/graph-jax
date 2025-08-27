@@ -5,14 +5,14 @@ from jax.nn import log_softmax
 @jax.jit
 def cross_entropy_loss(logits: jnp.ndarray, labels: jnp.ndarray) -> jnp.ndarray:
     """
-    计算多分类交叉熵损失。
+    Compute multi-class cross-entropy loss.
 
     Args:
-        logits (jnp.ndarray): 模型的原始输出 (未经过 softmax)，形状为 [..., n_classes]。
-        labels (jnp.ndarray): 真实的标签，可以是 one-hot 编码或整数索引。
+        logits (jnp.ndarray): Raw model output (before softmax), shape [..., n_classes].
+        labels (jnp.ndarray): True labels, can be one-hot encoded or integer indices.
 
     Returns:
-        jnp.ndarray: 一个标量，表示平均损失。
+        jnp.ndarray: A scalar representing the average loss.
     """
     lsm = log_softmax(logits)
     if labels.shape == logits.shape:
@@ -24,19 +24,19 @@ def cross_entropy_loss(logits: jnp.ndarray, labels: jnp.ndarray) -> jnp.ndarray:
 @jax.jit
 def binary_cross_entropy_with_logits(logits: jnp.ndarray, labels: jnp.ndarray) -> jnp.ndarray:
     """
-    计算二元交叉熵损失，输入为 logits 以保证数值稳定性。
-    这是 jax.nn.sigmoid_binary_cross_entropy 的手动实现。
+    Compute binary cross-entropy loss with logits input for numerical stability.
+    This is a manual implementation of jax.nn.sigmoid_binary_cross_entropy.
 
     Args:
-        logits (jnp.ndarray): 模型的原始输出 (未经过 sigmoid)。
-        labels (jnp.ndarray): 真实的标签 (0 或 1)。
+        logits (jnp.ndarray): Raw model output (before sigmoid).
+        labels (jnp.ndarray): True labels (0 or 1).
 
     Returns:
-        jnp.ndarray: 一个标量，表示平均损失。
+        jnp.ndarray: A scalar representing the average loss.
     """
-    # 使用 log-sum-exp 技巧实现数值稳定的版本
-    # 公式: max(x, 0) - x * z + log(1 + exp(-abs(x)))
-    # JAX 的 softplus(x) = log(1 + exp(x)) 是稳定的
+    # Use log-sum-exp trick to implement numerically stable version
+    # Formula: max(x, 0) - x * z + log(1 + exp(-abs(x)))
+    # JAX's softplus(x) = log(1 + exp(x)) is stable
     # softplus(-x) = log(1 + exp(-x))
     loss = jax.nn.softplus(-logits) + logits - labels * logits
     return jnp.mean(loss)
@@ -44,27 +44,27 @@ def binary_cross_entropy_with_logits(logits: jnp.ndarray, labels: jnp.ndarray) -
 @jax.jit
 def mean_squared_error(y_pred: jnp.ndarray, y_true: jnp.ndarray) -> jnp.ndarray:
     """
-    计算均方误差 (MSE)。
+    Compute mean squared error (MSE).
 
     Args:
-        y_pred (jnp.ndarray): 模型的预测值。
-        y_true (jnp.ndarray): 真实的标签值。
+        y_pred (jnp.ndarray): Model predictions.
+        y_true (jnp.ndarray): True label values.
 
     Returns:
-        jnp.ndarray: 一个标量，表示平均损失。
+        jnp.ndarray: A scalar representing the average loss.
     """
     return jnp.mean((y_pred - y_true) ** 2)
 
 @jax.jit
 def mean_absolute_error(y_pred: jnp.ndarray, y_true: jnp.ndarray) -> jnp.ndarray:
     """
-    计算平均绝对误差 (MAE)。
+    Compute mean absolute error (MAE).
 
     Args:
-        y_pred (jnp.ndarray): 模型的预测值。
-        y_true (jnp.ndarray): 真实的标签值。
+        y_pred (jnp.ndarray): Model predictions.
+        y_true (jnp.ndarray): True label values.
 
     Returns:
-        jnp.ndarray: 一个标量，表示平均损失。
+        jnp.ndarray: A scalar representing the average loss.
     """
     return jnp.mean(jnp.abs(y_pred - y_true))

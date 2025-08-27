@@ -13,7 +13,7 @@ from graph_jax.utils import set_backend
 
 set_backend('cpu')
 
-# 设置matplotlib不显示图片，只保存
+# Set matplotlib to not display images, only save
 plt.ioff()
 import matplotlib
 matplotlib.use('Agg')
@@ -378,7 +378,7 @@ print("\n" + "=" * 60)
 print("Generating visualization charts...")
 print("=" * 60)
 
-# 创建可视化
+    # Create visualization
 def create_visualizations():
     # Create a 3x2 subplot layout for comprehensive analysis
     fig, ((ax1, ax2), (ax3, ax4), (ax5, ax6)) = plt.subplots(3, 2, figsize=(15, 18))

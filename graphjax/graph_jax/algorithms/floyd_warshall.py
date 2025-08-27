@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Shortest path algorithms for Graph-JAX.
+Floyd-Warshall algorithm implementations for Graph-JAX.
+
+This module provides various shortest path computations based on the Floyd-Warshall algorithm,
+which computes all-pairs shortest paths in O(n³) time complexity.
 """
 
 import jax
@@ -25,6 +28,7 @@ def shortest_paths(
     """
     n_nodes = g.n_nodes
     
+    # Algorithm: Floyd-Warshall
     # Initialize distance matrix
     if g.edge_weights is not None:
         weights = g.edge_weights
@@ -43,6 +47,7 @@ def shortest_paths(
     # Floyd-Warshall algorithm
     for k in range(n_nodes):
         # Update distances through intermediate node k
+        # Algorithm: Floyd-Warshall update step
         dist_through_k = adj_matrix[:, k:k+1] + adj_matrix[k:k+1, :]
         adj_matrix = jnp.minimum(adj_matrix, dist_through_k)
     
@@ -60,6 +65,7 @@ def single_source_shortest_paths(
 ) -> jnp.ndarray:
     """
     Compute shortest paths from a single source node to all other nodes.
+    Algorithm: Uses all-pairs Floyd-Warshall and selects source row.
     
     Args:
         g: Graph object
@@ -81,6 +87,7 @@ def path_exists(
 ) -> bool:
     """
     Check if a path exists between two nodes.
+    Algorithm: Uses Floyd-Warshall all-pairs shortest paths.
     
     Args:
         g: Graph object
@@ -101,6 +108,7 @@ def diameter(
 ) -> float:
     """
     Compute the diameter of the graph (maximum shortest path length).
+    Algorithm: Uses Floyd-Warshall all-pairs shortest paths.
     
     Args:
         g: Graph object
@@ -125,6 +133,7 @@ def average_shortest_path_length(
 ) -> float:
     """
     Compute the average shortest path length in the graph.
+    Algorithm: Uses Floyd-Warshall all-pairs shortest paths.
     
     Args:
         g: Graph object

@@ -13,7 +13,7 @@ import numpy as np
 from typing import Dict, Union, Tuple, Optional
 from functools import partial
 
-from ..shortest_path import shortest_paths
+from ..floyd_warshall import shortest_paths
 
 
 # ============================================================================
