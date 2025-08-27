@@ -12,7 +12,6 @@ Then feel free to use it like:
 ```python
 import graph_jax as gj
 import graph_jax.utils.set_backend
-import graph_jax.algorithms.min_plus_shortest_paths
 import jax
 # please use this config to set up XLA backends, or you can use jax.config()
 set_backend('cpu')
