@@ -5,6 +5,12 @@ from functools import partial
 from ..graphs import Graph
 from ..kernels.min_cut import min_cut_matrix_optimized
 
+"""
+The Dimension reduction approach (in graphjax/graph_jax/algorithms/capacity.py) is reproduced based on Salgado, A., He, Y., Radke, J. et al. 
+Dimension reduction approach for understanding resource-flow resilience to climate change. 
+Commun Phys 7, 192 (2024). https://doi.org/10.1038/s42005-024-01664-z
+"""
+
 @partial(jax.jit, static_argnames=('use_parallel',))
 def capacity_params(
     g: Graph,
