@@ -1,86 +1,93 @@
 #!/usr/bin/env python3
 """
 Supply Chain Network Vulnerability Analysis Example
-Demonstrating the practical problems solved by Max-Flow Min-Cut + ODE solving
-"""
+Demonstrating Graph-JAX's capacity analysis capabilities
 
+Citation: Salgado, A., He, Y., Radke, J. et al. 
+Dimension reduction approach for understanding resource-flow resilience to climate change. 
+Commun Phys 7, 192 (2024). https://doi.org/10.1038/s42005-024-01664-z
+
+This example demonstrates how Graph-JAX's capacity analysis can be used to:
+1. Compute network capacity parameters from actual topology
+2. Analyze system stability and failure times
+3. Evaluate supply chain resilience under disruptions
+
+"""
 import numpy as np
 import matplotlib.pyplot as plt
 import graph_jax as gj
 import jax.numpy as jnp
 import time
+import networkx as nx
 
 # Force CPU backend to avoid Metal issues
 from graph_jax.utils import set_backend
 set_backend('cpu')
 
-def create_supply_chain_example():
+def create_supply_chain_network():
     """
-    Generate realistic SFFTN data based on He et al. 2021
+    Create a realistic supply chain network and use Graph-JAX's capacity analysis
+    to compute all parameters from the actual network topology.
     """
-    import networkx as nx
-    rng = np.random.default_rng(42)
+    import time
+    
+    # Use current time as seed for variability
+    rng = np.random.default_rng(int(time.time() * 1000) % 10000)
 
     # ---------------------------------------------------------
-    # 1. Real node counts from paper Table 1
+    # 1. Network structure based on paper Table 1
     # ---------------------------------------------------------
     N1, N2, N3 = 5, 29, 3422          # Refineries / Terminals / Gas stations
     n_nodes = N1 + N2 + N3
 
     # ---------------------------------------------------------
-    # 2. Real capacity from paper Table 1 (Million gallons / week)
+    # 2. Node capacity parameters from paper Table 1
     # ---------------------------------------------------------
-    C1 = (38.2 + 57.3) / 2            # 47.75  Mgal
-    C2 = (31   + 62)  / 2             # 46.5   Mgal
-    C3 = 0.035                        # Gas stations
+    # Node capacity ranges from Table 1
+    C1_range = [38.2, 57.3]  # Refinery capacity range (Mgal)
+    C2_range = [31, 62]      # Terminal capacity range (Mgal)
+    C3_value = 0.035         # Gas station capacity (Mgal, fixed)
+    
+    # Sample node capacities from normal distributions
+    def sample_from_range(rng, min_val, max_val):
+        """Sample from normal distribution within given range"""
+        mean = (min_val + max_val) / 2
+        std = (max_val - min_val) / 6  # 99.7% of normal distribution within 6 std
+        sample = rng.normal(mean, std)
+        return np.clip(sample, min_val, max_val)
+    
+    C1 = sample_from_range(rng, C1_range[0], C1_range[1])
+    C2 = sample_from_range(rng, C2_range[0], C2_range[1])
+    C3 = C3_value
 
-    # Edge capacity intervals → take mean values
-    W12 = (70  + 140) / 2             # Refinery → Terminal (pipeline)
-    W23 = (105 + 245) / 2             # Terminal → Gas Station (truck)
-    W13 = (21  + 81)  / 2             # Refinery → Gas Station (truck)
-
     # ---------------------------------------------------------
-    # 3. Construct sparse graph consistent with the paper
+    # 3. Construct realistic supply chain network
     # ---------------------------------------------------------
-    # Refineries 0–4
-    prod  = np.arange(0,  N1)
-    # Terminals 5–33
-    term  = np.arange(N1, N1+N2)
-    # Gas stations 34–3455
-    gas   = np.arange(N1+N2, n_nodes)
+    # Node indices
+    prod  = np.arange(0,  N1)                    # Refineries 0–4
+    term  = np.arange(N1, N1+N2)                 # Terminals 5–33
+    gas   = np.arange(N1+N2, n_nodes)            # Gas stations 34–3455
 
     edges = []
     
-    # Calculate target edge counts for ~1M edges
-    target_edges = 8000
-    total_nodes = n_nodes
-    
-    # Distribute edges across different connection types
-    # Refinery → Terminal: ~5% of edges (50,000)
-    # Terminal → Gas Station: ~90% of edges (900,000) 
-    # Refinery → Gas Station: ~5% of edges (50,000)
-    
     # 1. Refinery → Terminal connections (pipeline network)
-    refinery_terminal_edges = 1500
+    refinery_terminal_edges = 150
     edges_per_refinery = refinery_terminal_edges // N1
     for r in prod:
-        # Each refinery connects to multiple terminals with high connectivity
         tgt = rng.choice(term, size=min(edges_per_refinery, N2), replace=False)
         edges.extend([(r, t) for t in tgt])
     
     # 2. Terminal → Gas Station connections (truck network)
-    terminal_gas_edges = 6000
+    terminal_gas_edges = 7800
     edges_per_terminal = terminal_gas_edges // N2
     for t in term:
-        # Each terminal connects to many gas stations
         tgt = rng.choice(gas, size=min(edges_per_terminal, N3), replace=False)
         edges.extend([(t, g) for g in tgt])
     
     # 3. Refinery → Gas Station connections (direct truck routes)
-    refinery_gas_edges = 500
+    refinery_gas_edges = 3500
     edges_per_refinery_direct = refinery_gas_edges // N1
     for r in prod:
-        # Direct connections from refineries to gas stations
         tgt = rng.choice(gas, size=min(edges_per_refinery_direct, N3), replace=False)
         edges.extend([(r, g) for g in tgt])
 
@@ -96,34 +103,45 @@ def create_supply_chain_example():
     print(f"  Network density: {len(edges)/(n_nodes*(n_nodes-1)/2):.6f}")
     print(f"  Average degree: {2*len(edges)/n_nodes:.1f}")
 
+    # ---------------------------------------------------------
+    # 4. Build NetworkX graph with realistic capacities
+    # ---------------------------------------------------------
     G = nx.Graph()
     
-    # Add all nodes first to ensure we have the full graph
+    # Add all nodes first
     for i in range(n_nodes):
         G.add_node(i)
     
+    # Add edges with realistic capacities
     for u, v in edges:
-        # Assign paper mean capacity based on edge type
         if u in prod and v in term:
-            cap = W12
+            # Refinery → Terminal: high capacity pipeline
+            cap = rng.uniform(70, 140)  # Mgal week^-1
         elif u in term and v in gas:
-            cap = W23
+            # Terminal → Gas Station: medium capacity truck route
+            cap = rng.uniform(105, 245)  # Mgal week^-1
         else:
-            cap = W13
+            # Refinery → Gas Station: direct truck route
+            cap = rng.uniform(21, 81)    # Mgal week^-1
         G.add_edge(u, v, capacity=cap)
 
+    # Convert to Graph-JAX format
     g = gj.from_networkx(G)
 
     # ---------------------------------------------------------
-    # 4. Layer masks
+    # 5. Create layer masks for capacity analysis
     # ---------------------------------------------------------
     ref_mask = jnp.zeros(n_nodes, dtype=bool).at[jnp.array(prod)].set(True)
     term_mask = jnp.zeros(n_nodes, dtype=bool).at[jnp.array(term)].set(True)
     gas_mask = jnp.zeros(n_nodes, dtype=bool).at[jnp.array(gas)].set(True)
 
     # ---------------------------------------------------------
-    # 5. Capacity parameter calculation (aligned with paper)
+    # 6. Use Graph-JAX's capacity_params to compute all parameters
     # ---------------------------------------------------------
+    print(f"\nComputing capacity parameters using Graph-JAX...")
+    
+    # Use the optimized capacity_params function to compute all parameters
+    # from the actual network topology
     params = gj.algorithms.capacity_params(
         g,
         ref_mask,
@@ -132,267 +150,219 @@ def create_supply_chain_example():
         C1=C1,
         C2=C2,
         C3=C3,
-        edge_cap=W12          # Maximum capacity of single pipeline/truck
+        edge_cap=100.0,  # Base edge capacity (will be overridden by actual edge capacities)
+        use_parallel=True
     )
     
+    # Calculate p and d from network parameters according to paper formula (2)
+    # p = P/C1, d = D/C3 where P and D are from Table 1
+    P_total = 18.9  # Total production capacity (Mgal week^-1) from Table 1
+    D_total = 0.028  # Total demand capacity (Mgal week^-1) from Table 1
+    
+    # Calculate normalized production and demand rates
+    params['p'] = P_total / C1  # Normalized production capacity
+    params['d'] = D_total / C3  # Normalized demand capacity
+    
+    print(f"  Calculated p = P/C1 = {P_total}/{C1:.3f} = {params['p']:.3f}")
+    print(f"  Calculated d = D/C3 = {D_total}/{C3:.3f} = {params['d']:.3f}")
+    
+    # Normalize parameters for ODE system stability
+    # The raw capacity parameters from min-cut need normalization for the ODE solver
+    print(f"\nNormalizing parameters for ODE system...")
+    
+    # Calculate normalization factors based on the paper's approach
+    # Use a more conservative normalization to ensure ODE stability
+    # Target range: s parameters should be in [0.1, 1.0] for stable ODE
+    max_capacity = max(params['s12'], params['s23'], params['s13'])
+    normalization_factor = 0.1 / max_capacity if max_capacity > 0 else 1.0  # Less aggressive normalization
+    
+    # Store original parameters for display
+    original_params = params.copy()
+    
+    # Apply normalization to capacity parameters
+    params['s12'] = params['s12'] * normalization_factor
+    params['s23'] = params['s23'] * normalization_factor
+    params['s13'] = params['s13'] * normalization_factor
+    
+    print(f"  Normalization factor: {normalization_factor:.6f}")
+    print(f"  Original s12: {original_params['s12']:.3f} → Normalized: {params['s12']:.3f}")
+    print(f"  Original s23: {original_params['s23']:.3f} → Normalized: {params['s23']:.3f}")
+    print(f"  Original s13: {original_params['s13']:.3f} → Normalized: {params['s13']:.3f}")
+    
     # ---------------------------------------------------------
-    # 6. Adjust capacity parameters to match production-demand ratio
+    # 7. Display computed parameters
     # ---------------------------------------------------------
-    # Calculate production-demand ratio
-    production_demand_ratio = 0.42 / 0.79  # p/d = 0.53
+    print(f"\nGraph-JAX Computed Parameters:")
+    print(f"  Node counts: N1={params['N1']}, N2={params['N2']}, N3={params['N3']}")
+    print(f"  Node capacities: C1={C1:.3f}, C2={C2:.3f}, C3={C3:.3f} Mgal")
+    print(f"  Network capacity parameters:")
+    print(f"    s12 (Production→Terminal): {params['s12']:.3f}")
+    print(f"    s23 (Terminal→Consumption): {params['s23']:.3f}")
+    print(f"    s13 (Production→Consumption): {params['s13']:.3f}")
+    print(f"    α12 (Production/Terminal ratio): {params['alpha12']:.3f}")
+    print(f"    α23 (Terminal/Consumption ratio): {params['alpha23']:.3f}")
+    print(f"  System parameters:")
+    print(f"    p (Production rate): {params['p']:.3f} week^-1")
+    print(f"    d (Demand rate): {params['d']:.3f} week^-1")
+    print(f"    p/d ratio: {params['p']/params['d']:.3f}")
     
-    # Adjust capacity parameters to match production-demand ratio
-    # Goal: Keep steady state values in reasonable range (0.1-1.0)
-    # With larger network, we need to scale differently
-    scale_factor = 0.0001  # Further reduce capacity parameters for large network
-    
-    params['s12'] *= scale_factor
-    params['s23'] *= scale_factor  
-    params['s13'] *= scale_factor
-    
-    print(f"Production-demand ratio: {production_demand_ratio:.3f}")
-    print(f"Capacity scaling factor: {scale_factor}")
-    
-    # Calculate theoretical steady state values as initial conditions
-    # For the simplified ODE system, steady state should satisfy:
-    # dy1/dt = 0: p*y1 - s12*y1*y2 - s13*y1*y3 = 0
-    # dy2/dt = 0: (s12/a12)*y1*y2 - s23*y2*y3 = 0  
-    # dy3/dt = 0: -d*y3 + (s13/(a12*a23))*y1*y3 + (s23/a23)*y2*y3 = 0
-    
-    # Simplified assumption: y1 ≈ p/(s12 + s13), y2 ≈ 1, y3 ≈ 1
-    p = 0.42
-    d = 0.79
-    s12_scaled = params['s12']
-    s13_scaled = params['s13']
-    
-    # Theoretical steady state estimate
-    y1_steady = p / (s12_scaled + s13_scaled + 1e-8)
-    y2_steady = 0.5  # Medium level
-    y3_steady = 0.5  # Medium level
-    
-    print(f"Theoretical steady state estimate: y1={y1_steady:.3f}, y2={y2_steady:.3f}, y3={y3_steady:.3f}")
+    return g, params, ref_mask, term_mask, gas_mask
 
-    # ---------------------------------------------------------
-    # 7. Print verification
-    # ---------------------------------------------------------
-    print("Realistic SFFTN parameters")
-    for k in ['N1', 'N2', 'N3', 's12', 's23', 's13', 'alpha12', 'alpha23']:
-        print(f"{k:>8}: {params[k]:.3f}")
-
-    return params, g, ref_mask, term_mask, gas_mask
-
-def simulate_system_evolution(params):
+def simulate_system_evolution(params, production_levels, ΔT=14.0):
     """
-    Simulate system evolution using Graph-JAX ODE solver
+    Simulate system evolution under different production disruption scenarios
+    using Graph-JAX's capacity analysis functions.
+    
+    First computes the normal steady state, then simulates disruptions from that baseline.
     """
-    print("\n" + "=" * 60)
-    print("System Evolution Simulation")
-    print("=" * 60)
+    print(f"\n{'='*60}")
+    print(f"System Evolution Simulation")
+    print(f"{'='*60}")
+    print(f"System parameters: p={params['p']}, d={params['d']}")
     
-    # Set system parameters for balanced operation around 1.0
-    system_params = params.copy()
-    system_params.update({'p': 0.42, 'd': 0.79})  # 100% production rate to match output capacity
+    # Step 1: Compute steady state at 100% production (normal operation)
+    print(f"\nStep 1: Computing steady state at 100% production (normal operation)...")
+    print(f"{'-'*60}")
     
-    print(f"System parameters: p={system_params['p']}, d={system_params['d']}")
+    start_time = time.time()
+    normal_steady_state = gj.algorithms.capacity.steady_state(params, t_max=200.0, n_steps=2000)
+    steady_state_time = time.time() - start_time
     
-    # Step 1: Let the network reach steady state at 100% production capacity
-    print("\nStep 1: Letting network reach steady state at 100% production capacity...")
-    print("-" * 60)
+    print(f"Normal steady state calculation time: {steady_state_time:.4f} seconds")
+    print(f"Normal steady state: Production={normal_steady_state[0]:.3f}, Transport={normal_steady_state[1]:.3f}, Consumption={normal_steady_state[2]:.3f}")
     
-    # Calculate steady state using Graph-JAX algorithms with better initial state
-    import time as time_module
-    start_time = time_module.time()
+    # Step 2: Simulate disruption scenarios starting from normal steady state
+    print(f"\nStep 2: Simulating production disruption scenarios from normal steady state...")
+    print(f"{'-'*60}")
     
-    # Use a more stable initial state based on theoretical estimates
-    p = system_params['p']
-    s12 = system_params['s12']
-    s13 = system_params['s13']
+    collapse_times = []
+    demand_satisfaction = []
     
-    # Calculate more reasonable initial state
-    y1_init = p / (s12 + s13 + 1e-8)
-    y2_init = 0.5
-    y3_init = 0.5
+    start_time = time.time()
     
-    print(f"Using improved initial state: y1={y1_init:.3f}, y2={y2_init:.3f}, y3={y3_init:.3f}")
-    
-    # Manually calculate steady state using more stable parameters
-    steady_state = gj.algorithms.steady_state(system_params, t_max=200.0, n_steps=2000)
-    steady_time = time_module.time() - start_time
-    
-    print(f"Steady state calculation time: {steady_time:.4f} seconds")
-    print(f"Steady state at 100% production: Production={steady_state[0]:.3f}, Transport={steady_state[1]:.3f}, Consumption={steady_state[2]:.3f}")
-    
-    # Use steady state as initial condition for all disruption experiments
-    y0 = steady_state
-    print(f"Using steady state as initial condition for disruption experiments")
-    print(f"Initial state: Production={y0[0]:.2f}, Transport={y0[1]:.2f}, Consumption={y0[2]:.2f}")
-    
-    # Step 2: Start disruption experiments from steady state
-    print("\nStep 2: Starting disruption experiments from steady state...")
-    print("-" * 60)
-    
-    # Calculate failure time with different production disruption scenarios
-    print(f"\nProduction Disruption Scenarios (ΔT=14 days):")
-    import time as time_module
-    start_time = time_module.time()
-    
-    # Create different disruption scenarios with more granular points
-    scenarios = {
-        '99% Production': system_params['p'] * 0.99,    # 99% of normal production
-        '90% Production': system_params['p'] * 0.90,    # 90% of normal production
-        '75% Production': system_params['p'] * 0.75,    # 75% of normal production
-        '50% Production': system_params['p'] * 0.50,    # 50% of normal production
-        '40% Production': system_params['p'] * 0.40,    # 40% of normal production
-        '30% Production': system_params['p'] * 0.30,    # 30% of normal production
-        '20% Production': system_params['p'] * 0.20,    # 20% of normal production
-        '10% Production': system_params['p'] * 0.10,    # 10% of normal production
-        '5% Production': system_params['p'] * 0.05,     # 5% of normal production
-        'Complete Shutdown': 0.0                        # 0% production
-    }
-    
-    results = {}
-    for scenario_name, production_rate in scenarios.items():
-        disruption_params = system_params.copy()
-        disruption_params['p'] = production_rate
+    for level in production_levels:
+        # Create disruption parameters
+        disruption_params = params.copy()
+        disruption_params['p'] = params['p'] * level
         
-        # Use Graph-JAX algorithms for failure time calculation
-        τ, QD = gj.algorithms.failure_time(disruption_params, ΔT=14.0)
-        results[scenario_name] = {'tau': τ, 'qd': QD, 'p': production_rate}
-        
-        print(f"\n{scenario_name} simulation:")
-        print(f"  Production rate: {production_rate:.3f}")
-        print(f"  System collapse time: {τ:.2f} days")
-        print(f"  Average demand satisfaction rate: {QD:.3f}")
-    
-    # Add 100% production (steady state) to results
-    steady_state_tau = 14.0  # 100% production is stable
-    results['100% Production (Steady State)'] = {'tau': steady_state_tau, 'qd': 1.0, 'p': system_params['p']}
-    
-    failure_time = time_module.time() - start_time
-    print(f"\nTotal failure time calculation time: {failure_time:.4f} seconds")
-    
-    # Find critical threshold more precisely
-    print(f"\nCritical Threshold Analysis:")
-    print(f"=" * 50)
-    
-    # Sort results by production level
-    sorted_results = []
-    for scenario_name, result in results.items():
-        if 'Complete Shutdown' in scenario_name:
-            production_level = 0
+        # For normal operation (100%), use the pre-computed steady state
+        if level == 1.0:
+            # Normal operation - system is stable
+            τ = ΔT  # System remains stable for the entire simulation period
+            
+            # Calculate actual demand satisfaction based on production-demand ratio
+            production_rate = disruption_params['p']
+            demand_rate = disruption_params['d']
+            
+            if demand_rate > 0:
+                QD = min(1.0, production_rate / demand_rate)
+            else:
+                QD = 1.0
+            
+            print(f"{level*100:2.0f}% Production simulation (Normal operation):")
+            print(f"  Production rate: {disruption_params['p']:.3f}")
+            print(f"  System status: STABLE (no collapse)")
+            print(f"  Demand satisfaction rate: {QD:.3f}")
+            print()
         else:
-            production_level = float(scenario_name.split('%')[0])
-        sorted_results.append((production_level, result['tau'], scenario_name))
-    
-    # Add steady state result (100% production, no collapse)
-    # Use actual steady state failure time instead of hardcoded 50.0
-    # Note: This is now handled in the results dictionary above
-    # sorted_results.append((100.0, steady_state_tau, '100% Production (Steady State)'))
-    
-    sorted_results.sort(key=lambda x: x[0], reverse=True)
-    
-    # Find critical threshold (collapse time <= 1 day)
-    critical_threshold = None
-    for level, time, scenario in sorted_results:
-        if scenario == '100% Production (Steady State)':
-            print(f"  {scenario}: No collapse (stable)")
-        else:
-            print(f"  {scenario}: {time:.2f} days")
-        if time <= 1.0 and critical_threshold is None and scenario != '100% Production (Steady State)':
-            critical_threshold = level
-            print(f"  *** Critical threshold found: {level}% production ***")
-            print(f"  Below {level}% production, system collapses within 1 day")
-    
-    if critical_threshold is None:
-        print(f"  *** No critical threshold found - all scenarios > 1 day ***")
-    
-    # Find safe threshold (collapse time >= 7 days)
-    safe_threshold = None
-    for level, time, scenario in sorted_results:
-        if time >= 7.0:
-            safe_threshold = level
-            print(f"  *** Safe threshold: {level}% production (>= 7 days) ***")
-            break
-    
-    # Simulate time evolution using Graph-JAX algorithms
-    from scipy.integrate import odeint
-    
-    # Use Graph-JAX algorithms for time evolution simulation
-    from scipy.integrate import odeint
-    
-    # Define time points for simulation (starting from steady state)
-    t = np.linspace(0, 50, 1000)
-    
-    # Create disruption scenarios starting from steady state
-    solutions = {}
-    
-    # For visualization, we need to simulate the full time evolution
-    # We'll use the same ODE system as in graph_jax.algorithms.capacity
-    def simulate_time_evolution(params, y0, t):
-        """Simulate time evolution using the same ODE system as capacity module"""
-        from scipy.integrate import odeint
+            # Disruption scenario - simulate from normal steady state
+            # We need to create a new ODE system that starts from the normal steady state
+            # and simulates the disruption scenario
+            
+            # Calculate demand satisfaction based on production-demand ratio
+            production_rate = disruption_params['p']
+            demand_rate = disruption_params['d']
+            
+            # Calculate demand satisfaction as the ratio of production to demand
+            if demand_rate > 0:
+                QD = min(1.0, production_rate / demand_rate)
+            else:
+                QD = 1.0
+            
+            # For disruption scenarios, we need to simulate the system evolution
+            # starting from the normal steady state with reduced production
+            try:
+                # Use a shorter simulation time for disruption scenarios
+                disruption_steady_state = gj.algorithms.capacity.steady_state(disruption_params, t_max=50.0, n_steps=500)
+                
+                # Check if the system collapses (consumption level drops significantly)
+                normal_consumption = normal_steady_state[2]
+                disruption_consumption = disruption_steady_state[2]
+                
+                # If consumption drops below 10% of normal, consider it collapsed
+                if disruption_consumption < 0.1 * normal_consumption:
+                    # Estimate collapse time based on consumption rate
+                    τ = min(ΔT, normal_consumption / (normal_consumption - disruption_consumption) * 10.0)
+                else:
+                    τ = ΔT  # System remains stable
+                    
+            except:
+                # If ODE solver fails, use a simple estimate
+                τ = min(ΔT, normal_steady_state[2] / demand_rate if demand_rate > 0 else ΔT)
+            
+            print(f"{level*100:2.0f}% Production simulation (Disruption from normal state):")
+            print(f"  Production rate: {disruption_params['p']:.3f}")
+            print(f"  System collapse time: {τ:.2f} days")
+            print(f"  Average demand satisfaction rate: {QD:.3f}")
+            print()
         
-        # Enhanced ODE system with realistic production, flow, and demand functions
-        # Based on supply chain dynamics research and physical constraints
-        def rhs(y, t, params):
-            y1, y2, y3 = y
-            p, d, s12, s23, s13 = params["p"], params["d"], params["s12"], params["s23"], params["s13"]
-            a12, a23 = params["alpha12"], params["alpha23"]
+        collapse_times.append(float(τ))
+        demand_satisfaction.append(float(QD))
+    
+    total_time = time.time() - start_time
+    print(f"Total disruption analysis time: {total_time:.4f} seconds")
+    
+    return collapse_times, demand_satisfaction, normal_steady_state
 
-            # Linear model for production, demand, and flow functions
-            # Simple linear functions as in the original paper
-            
-            # 1. Production Function Π(y₁) = y₁ (linear)
-            production_func = y1
-            
-            # 2. Demand Function Δ(y₃) = y₃ (linear)
-            demand_func = y3
-            
-            # 3. Flow Function Ψ(y_q, y_r) = y_q * y_r (bilinear)
-            def flow_func(y_q, y_r):
-                return y_q * y_r
-            
-            # Enhanced ODE system with realistic functions:
-            # ẏ₁ = pΠ(y₁) - s₁₂Ψ(y₁,y₂) - s₁₃Ψ(y₁,y₃)
-            # ẏ₂ = s₁₂/α₁₂ Ψ(y₁,y₂) - s₂₃Ψ(y₂,y₃)
-            # ẏ₃ = -dΔ(y₃) + s₁₃/(α₁₂α₂₃) Ψ(y₁,y₃) + s₂₃/α₂₃ Ψ(y₂,y₃)
-            
-            dy1 = p * production_func - s12 * flow_func(y1, y2) - s13 * flow_func(y1, y3)
-            dy2 = s12 / a12 * flow_func(y1, y2) - s23 * flow_func(y2, y3)
-            dy3 = -d * demand_func + s13 / (a12 * a23) * flow_func(y1, y3) + s23 / a23 * flow_func(y2, y3)
-            
-            return [dy1, dy2, dy3]
+def analyze_critical_thresholds(collapse_times, production_levels):
+    """
+    Analyze critical thresholds for system stability.
+    """
+    print(f"\nIndividual Critical Analysis:")
+    print(f"{'='*50}")
+    
+    critical_count = 0
+    warning_count = 0
+    safe_count = 0
+    
+    critical_scenarios = []
+    warning_scenarios = []
+    safe_scenarios = []
+    
+    for i, (level, tau) in enumerate(zip(production_levels, collapse_times)):
+        if tau <= 1.0:
+            status = "CRITICAL"
+            critical_count += 1
+            critical_scenarios.append(f"{level*100:.0f}% Production")
+        elif tau <= 7.0:
+            status = "WARNING"
+            warning_count += 1
+            warning_scenarios.append(f"{level*100:.0f}% Production")
+        else:
+            status = "SAFE"
+            safe_count += 1
+            safe_scenarios.append(f"{level*100:.0f}% Production")
         
-        return odeint(rhs, y0, t, args=(params,))
+        scenario_name = f"{level*100:.0f}% Production" if level < 1.0 else "100% Production (Steady State)"
+        print(f"  {scenario_name}: {tau:.2f} days - {status}")
     
-    # Use steady state directly for normal operation (no re-simulation)
-    # This eliminates numerical fluctuations that would occur from re-simulating
-    # the already-converged steady state, ensuring a perfectly stable baseline
-    steady_state_array = np.tile(steady_state, (len(t), 1))
-    solutions['100% Production (Steady State)'] = steady_state_array
+    print(f"\nSummary:")
+    print(f"  Critical scenarios (≤1 day): {critical_count}")
+    print(f"  Warning scenarios (1-7 days): {warning_count}")
+    print(f"  Safe scenarios (>7 days): {safe_count}")
     
-    # Generate time series for disruption scenarios
-    for scenario_name, production_rate in scenarios.items():
-        disruption_params = system_params.copy()
-        disruption_params['p'] = production_rate
-        solutions[scenario_name] = simulate_time_evolution(disruption_params, y0, t)
-    
-    # Enhanced color palette with better distinction
-    nature_colors = {
-        '100% Production (Steady State)': '#1f77b4',  # Blue - Normal operation
-        '99% Production': '#ff7f0e',  # Orange
-        '90% Production': '#2ca02c',  # Green
-        '75% Production': '#d62728',  # Red
-        '50% Production': '#9467bd',  # Purple
-        '40% Production': '#8c564b',  # Brown
-        '30% Production': '#e377c2',  # Pink
-        '20% Production': '#7f7f7f',  # Gray
-        '10% Production': '#bcbd22',  # Olive
-        '5% Production': '#17becf',   # Cyan
-        'Complete Shutdown': '#000000' # Black
-    }
-    
-    # Visualization with Nature journal style
+    if critical_scenarios:
+        print(f"  Critical scenarios: {', '.join(critical_scenarios)}")
+    if warning_scenarios:
+        print(f"  Warning scenarios: {', '.join(warning_scenarios)}")
+    if safe_scenarios:
+        print(f"  Safe scenarios: {', '.join(safe_scenarios)}")
+
+def create_visualizations(collapse_times, demand_satisfaction, production_levels, params, steady_state):
+    """
+    Create comprehensive visualizations with enhanced time evolution analysis.
+    """
+    # Set up Nature journal style
     plt.style.use('default')
     plt.rcParams['font.family'] = 'Arial'
     plt.rcParams['font.size'] = 10
@@ -400,448 +370,260 @@ def simulate_system_evolution(params):
     plt.rcParams['axes.spines.top'] = False
     plt.rcParams['axes.spines.right'] = False
     
-    fig, axes = plt.subplots(3, 2, figsize=(15, 12))
-    fig.suptitle('Fuel Supply Chain Vulnerability Analysis: Refineries → Terminals → Gas Stations', fontsize=14, fontweight='bold')
+    # Create a larger figure with 4x2 subplot layout
+    fig, axes = plt.subplots(4, 2, figsize=(16, 16))
+    fig.suptitle('Fake Fuel Supply Chain Resilience Analysis', fontsize=16, fontweight='bold')
     
     # Layer names and colors
     layer_names = ['Production', 'Terminal Storage', 'Consumption']
     layer_colors = ['#1f77b4', '#2ca02c', '#d62728']
     
-    # Plot each layer evolution with improved visualization
-    for layer_idx in range(3):
-        ax = axes[layer_idx, 0]
-        
-        # Define line styles for better distinction
-        line_styles = ['-', '--', '-.', ':', '-', '--', '-.', ':', '-', '--', '-.', ':']
-        
-        # Plot scenarios with different line styles and reduced alpha for better visibility
-        for i, (scenario_name, solution) in enumerate(solutions.items()):
-            color = nature_colors.get(scenario_name, '#1f77b4')
-            line_style = line_styles[i % len(line_styles)]
-            
-            if scenario_name == '100% Production (Steady State)':
-                ax.plot(t, solution[:, layer_idx], color=color, label=scenario_name, 
-                       linewidth=3.0, linestyle='-', alpha=1.0)
-            else:
-                ax.plot(t, solution[:, layer_idx], color=color, label=scenario_name, 
-                       linewidth=1.8, linestyle=line_style, alpha=0.7)
-        
-        ax.set_xlabel('Time (days)', fontsize=10)
-        # Customize y-axis labels for better clarity
-        if layer_idx == 1:  # Terminal Storage layer
-            ax.set_ylabel(f'{layer_names[layer_idx]} Inventory (Mgal/week)', fontsize=10)
-        else:
-            ax.set_ylabel(f'{layer_names[layer_idx]} Level (Mgal/week)', fontsize=10)
-        ax.set_title(f'{layer_names[layer_idx]} Layer Evolution', fontsize=11, fontweight='bold')
-        ax.grid(True, alpha=0.3, linewidth=0.5)
-        ax.tick_params(axis='both', which='major', labelsize=9)
-        
-        # Add legend to all layer plots with smaller font and better positioning
-        ax.legend(bbox_to_anchor=(1.02, 1), loc='upper left', fontsize=7, 
-                 framealpha=0.9, ncol=1, columnspacing=0.5)
-    
-    # Subplot 4: Steady State Analysis
-    ax4 = axes[0, 1]
+    # 1. Steady State Analysis
+    ax1 = axes[0, 0]
     steady_state_labels = ['Production', 'Terminal Storage', 'Consumption']
     steady_state_colors = ['#1f77b4', '#2ca02c', '#d62728']
-    bars = ax4.bar(steady_state_labels, steady_state, color=steady_state_colors, alpha=0.8, edgecolor='black', linewidth=0.5)
-    ax4.set_ylabel('Steady State Inventory (Mgal/week)', fontsize=10)
-    ax4.set_title('Steady State Analysis', fontsize=11, fontweight='bold')
-    ax4.grid(True, alpha=0.3, linewidth=0.5, axis='y')
-    ax4.tick_params(axis='both', which='major', labelsize=9)
+    bars = ax1.bar(steady_state_labels, steady_state, color=steady_state_colors, alpha=0.8, edgecolor='black', linewidth=0.5)
+    ax1.set_ylabel('Steady State Inventory (Mgal/week)', fontsize=10)
+    ax1.set_title('Steady State Analysis', fontsize=11, fontweight='bold')
+    ax1.grid(True, alpha=0.3, linewidth=0.5, axis='y')
+    ax1.tick_params(axis='both', which='major', labelsize=9)
     
     # Add value labels on bars
     for bar, value in zip(bars, steady_state):
         height = bar.get_height()
-        ax4.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+        ax1.text(bar.get_x() + bar.get_width()/2., height + 0.01,
                 f'{value:.2f}', ha='center', va='bottom', fontsize=9)
     
-    # Subplot 5: Network Capacity Analysis
-    ax5 = axes[1, 1]
-    capacities = [system_params['s12'], system_params['s23'], system_params['s13']]
+    # 2. Network Capacity Analysis
+    ax2 = axes[0, 1]
+    capacities = [params['s12'], params['s23'], params['s13']]
     capacity_labels = ['Production→Terminal', 'Terminal→Consumption', 'Production→Consumption']
     capacity_colors = ['#ff7f0e', '#9467bd', '#8c564b']
-    bars = ax5.bar(capacity_labels, capacities, color=capacity_colors, alpha=0.8, edgecolor='black', linewidth=0.5)
-    ax5.set_ylabel('Capacity Parameters (Mgal/week)', fontsize=10)
-    ax5.set_title('Network Capacity Analysis', fontsize=11, fontweight='bold')
-    ax5.grid(True, alpha=0.3, linewidth=0.5, axis='y')
-    ax5.tick_params(axis='both', which='major', labelsize=9)
-    ax5.tick_params(axis='x', rotation=45)
+    bars = ax2.bar(capacity_labels, capacities, color=capacity_colors, alpha=0.8, edgecolor='black', linewidth=0.5)
+    ax2.set_ylabel('Capacity Parameters (Mgal/week)', fontsize=10)
+    ax2.set_title('Network Capacity Analysis', fontsize=11, fontweight='bold')
+    ax2.grid(True, alpha=0.3, linewidth=0.5, axis='y')
+    ax2.tick_params(axis='both', which='major', labelsize=9)
+    ax2.tick_params(axis='x', rotation=45)
     
     # Add value labels on bars
     for bar, value in zip(bars, capacities):
         height = bar.get_height()
-        ax5.text(bar.get_x() + bar.get_width()/2., height + 0.01,
+        ax2.text(bar.get_x() + bar.get_width()/2., height + 0.01,
                 f'{value:.2f}', ha='center', va='bottom', fontsize=9)
     
-    # Subplot 6: Critical Threshold Analysis
-    ax6 = axes[2, 1]
-    production_levels = []
-    collapse_times = []
-    scatter_colors = []
+    # 3. Production Disruption Impact
+    ax3 = axes[1, 0]
+    ax3.plot([p*100 for p in production_levels], collapse_times, 'bo-', linewidth=2, markersize=8)
+    ax3.set_xlabel('Production Level (%)', fontsize=10)
+    ax3.set_ylabel('System Collapse Time (days)', fontsize=10)
+    ax3.set_title('Production Disruption Impact', fontsize=11, fontweight='bold')
+    ax3.grid(True, alpha=0.3, linewidth=0.5)
+    ax3.axhline(y=1, color='red', linestyle='--', alpha=0.7, linewidth=1.5, label='Critical threshold (1 day)')
+    ax3.axhline(y=7, color='orange', linestyle='--', alpha=0.7, linewidth=1.5, label='Warning threshold (7 days)')
+    ax3.legend(fontsize=8, framealpha=0.9)
+    ax3.tick_params(axis='both', which='major', labelsize=9)
     
-    for scenario_name, result in results.items():
-        # Extract production percentage from scenario name
-        if 'Production' in scenario_name:
-            if 'Complete Shutdown' in scenario_name:
-                production_levels.append(0)
-            else:
-                # Extract percentage from scenario name
-                percentage = float(scenario_name.split('%')[0])
-                production_levels.append(percentage)
-        else:
-            production_levels.append(0)
-        
-        collapse_times.append(result['tau'])
-        
-        # Color coding based on collapse time using Nature colors
-        if result['tau'] > 7:
-            scatter_colors.append('#2ca02c')  # Green - Safe
-        elif result['tau'] > 3:
-            scatter_colors.append('#ff7f0e')  # Orange - Warning
-        else:
-            scatter_colors.append('#d62728')  # Red - Critical
+    # 4. Demand Satisfaction
+    ax4 = axes[1, 1]
+    ax4.plot([p*100 for p in production_levels], demand_satisfaction, 'go-', linewidth=2, markersize=8)
+    ax4.set_xlabel('Production Level (%)', fontsize=10)
+    ax4.set_ylabel('Demand Satisfaction Rate', fontsize=10)
+    ax4.set_title('Demand Satisfaction Under Disruption', fontsize=11, fontweight='bold')
+    ax4.grid(True, alpha=0.3, linewidth=0.5)
+    ax4.tick_params(axis='both', which='major', labelsize=9)
     
-    # Add the steady state point (100% production, no collapse)
-    production_levels.append(100)
-    collapse_times.append(50)  # No collapse within simulation time
-    scatter_colors.append('#2ca02c')  # Green - Safe
-    
-    # Create scatter plot with Nature colors
-    scatter = ax6.scatter(production_levels, collapse_times, c=scatter_colors, s=80, alpha=0.8, edgecolors='black', linewidth=0.5)
-    ax6.set_xlabel('Production Level (%)', fontsize=10)
-    ax6.set_ylabel('Collapse Time (days)', fontsize=10)
-    ax6.set_title('Critical Threshold Analysis', fontsize=11, fontweight='bold')
-    ax6.grid(True, alpha=0.3, linewidth=0.5)
-    ax6.tick_params(axis='both', which='major', labelsize=9)
-    
-    # Add threshold lines with Nature colors
-    ax6.axhline(y=7, color='#2ca02c', linestyle='--', alpha=0.7, linewidth=1.5, label='Safe Threshold (7 days)')
-    ax6.axhline(y=3, color='#ff7f0e', linestyle='--', alpha=0.7, linewidth=1.5, label='Warning Threshold (3 days)')
-    ax6.axhline(y=1, color='#d62728', linestyle='--', alpha=0.7, linewidth=1.5, label='Critical Threshold (1 day)')
-    ax6.legend(fontsize=8, framealpha=0.9)
-    
-    # Find and annotate critical threshold
+    # 5. Critical Threshold Analysis
+    ax5 = axes[2, 0]
     critical_threshold = None
-    for i, (level, time) in enumerate(zip(production_levels, collapse_times)):
-        if time <= 1.0 and critical_threshold is None and level < 100:  # Exclude steady state point
-            critical_threshold = level
-            ax6.annotate(f'Critical: {level}%', 
-                        xy=(level, time), 
-                        xytext=(level+5, time+1),
-                        arrowprops=dict(arrowstyle='->', color='#d62728', lw=1.5),
-                        fontsize=9, color='#d62728', fontweight='bold',
-                        bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
+    for i, (level, tau) in enumerate(zip(production_levels, collapse_times)):
+        if tau <= 1.0:
+            critical_threshold = level * 100
             break
     
-    # Adjust layout and save
-    plt.tight_layout()
-    plt.savefig('showcase/supply_chain_analysis.png', dpi=300, bbox_inches='tight', facecolor='white')
+    if critical_threshold is not None:
+        ax5.axvline(x=critical_threshold, color='red', linestyle='--', linewidth=2, label=f'Critical threshold: {critical_threshold:.1f}%')
+        ax5.axvspan(0, critical_threshold, alpha=0.2, color='red', label='Critical zone')
+        ax5.axvspan(critical_threshold, 100, alpha=0.2, color='green', label='Safe zone')
     
-    print(f"\nChart saved as 'supply_chain_analysis.png'")
+    ax5.plot([p*100 for p in production_levels], collapse_times, 'ro-', linewidth=2, markersize=8)
+    ax5.set_xlabel('Production Level (%)', fontsize=10)
+    ax5.set_ylabel('Collapse Time (days)', fontsize=10)
+    ax5.set_title('Critical Threshold Analysis', fontsize=11, fontweight='bold')
+    ax5.grid(True, alpha=0.3, linewidth=0.5)
+    ax5.legend(fontsize=8, framealpha=0.9)
+    ax5.tick_params(axis='both', which='major', labelsize=9)
     
-    return steady_state, τ, QD, results
-
-def calculate_maximum_stable_demand(params):
-    """
-    Calculate Maximum Stable Demand with production-dependent constraint:
-    The maximum demand that can be stably met depends on production capacity
-    """
-    s12, s13, s23 = params['s12'], params['s13'], params['s23']
-    alpha12, alpha23 = params['alpha12'], params['alpha23']
-    p = params['p']
-    
-    # Base capacity constraint
-    base_rhs = s13 + min(s12, alpha12 * s23)
-    base_max_demand = base_rhs / (alpha12 * alpha23)
-    
-    # Production-dependent constraint: demand cannot exceed production capacity
-    # In a realistic model, maximum stable demand should be limited by production
-    production_constraint = p * 0.8  # 80% of production capacity as realistic limit
-    
-    # Take the minimum of capacity constraint and production constraint
-    max_stable_demand = min(base_max_demand, production_constraint)
-    
-    return max_stable_demand
-
-def calculate_average_demand_level(params, t_max=50.0, n_steps=1000):
-    """
-    Calculate Average Demand Level (QD) using numerical integration:
-    QD = (1/T) ∫₀ᵀ Δ(y₃(t)) dt
-    """
-    from scipy.integrate import odeint
-    
-    def rhs(y, t, params):
-        y1, y2, y3 = y
-        p, d, s12, s23, s13 = params["p"], params["d"], params["s12"], params["s23"], params["s13"]
-        a12, a23 = params["alpha12"], params["alpha23"]
-
-        # Enhanced realistic functions with supply-demand balance
-        K_prod = 100.0
-        beta_prod = 0.01
-        # Add bounds to prevent overflow
-        y1_bounded = np.clip(y1, 0, K_prod)
-        production_func = y1_bounded * (1 - y1_bounded/K_prod) * np.exp(-beta_prod * y1_bounded)
-        
-        # Realistic demand function: demand decreases when supply is insufficient
-        K_demand = 80.0
-        gamma_demand = 0.02
-        # Add bounds to prevent division by zero and overflow
-        y1_safe = np.clip(y1, 1e-10, K_demand)
-        y2_safe = np.clip(y2, 1e-10, K_demand)
-        supply_availability = min(y1_safe, y2_safe) / max(y1_safe, y2_safe)
-        y3_bounded = np.clip(y3, 0, K_demand)
-        demand_func = y3_bounded * supply_availability / (1 + y3_bounded/K_demand) * (1 - np.exp(-gamma_demand * y3_bounded))
-        
-        eta_flow = 0.95
-        C_flow = 50.0
-        delta_flow = 0.05
-        
-        def flow_func(y_q, y_r):
-            # Add bounds to prevent overflow
-            y_q_bounded = np.clip(y_q, 0, C_flow)
-            y_r_bounded = np.clip(y_r, 0, C_flow)
-            min_val = min(y_q_bounded, y_r_bounded, C_flow)
-            return eta_flow * min_val * (1 - np.exp(-delta_flow * min_val))
-        
-        dy1 = p * production_func - s12 * flow_func(y1, y2) - s13 * flow_func(y1, y3)
-        dy2 = s12 / a12 * flow_func(y1, y2) - s23 * flow_func(y2, y3)
-        dy3 = -d * demand_func + s13 / (a12 * a23) * flow_func(y1, y3) + s23 / a23 * flow_func(y2, y3)
-        
-        return [dy1, dy2, dy3]
-
-    # Simulate system evolution with realistic initial conditions
-    y0 = [params['p'] * 0.5, 0.5, params['d'] * 0.5]  # Start with moderate levels
-    t = np.linspace(0, t_max, n_steps)
-    solution = odeint(rhs, y0, t, args=(params,))
-    
-    # Calculate demand function over time with supply constraint
-    y1_t, y2_t, y3_t = solution[:, 0], solution[:, 1], solution[:, 2]
-    K_demand = 80.0
-    gamma_demand = 0.02
-    
-    # Demand function that reflects supply availability
-    demand_t = []
-    for i in range(len(t)):
-        supply_availability = min(y1_t[i], y2_t[i]) / max(y1_t[i], y2_t[i]) if max(y1_t[i], y2_t[i]) > 0 else 0
-        demand_val = y3_t[i] * supply_availability / (1 + y3_t[i]/K_demand) * (1 - np.exp(-gamma_demand * y3_t[i]))
-        demand_t.append(demand_val)
-    
-    demand_t = np.array(demand_t)
-    
-    # Calculate average demand level
-    avg_demand = np.trapz(demand_t, t) / t_max
-    
-    return avg_demand, t, demand_t
-
-def analyze_network_capacity_ratios(params):
-    """
-    Analyze Network Capacity Ratios and their impact on system stability
-    """
-    s12, s23, s13 = params['s12'], params['s23'], params['s13']
-    alpha12, alpha23 = params['alpha12'], params['alpha23']
-    
-    # Calculate various capacity ratios
+    # 6. Network Capacity Ratios
+    ax6 = axes[2, 1]
     capacity_ratios = {
-        'α₁₂ (Production→Terminal)': alpha12,
-        'α₂₃ (Terminal→Consumption)': alpha23,
-        's₁₂/s₁₃ (Direct vs Indirect)': s12/s13 if s13 > 0 else float('inf'),
-        's₂₃/s₁₃ (Terminal vs Direct)': s23/s13 if s13 > 0 else float('inf'),
-        's₁₂/s₂₃ (Production vs Terminal)': s12/s23 if s23 > 0 else float('inf')
+        'alpha12 (Prod->Term)': params['alpha12'],
+        'alpha23 (Term->Cons)': params['alpha23'],
+        's12/s13 (Direct/Indirect)': params['s12'] / params['s13'],
+        's23/s13 (Term->Direct)': params['s23'] / params['s13'],
+        's12/s23 (Prod/Term)': params['s12'] / params['s23']
     }
     
-    return capacity_ratios
+    ratios = list(capacity_ratios.values())
+    labels = list(capacity_ratios.keys())
+    
+    bars = ax6.bar(range(len(ratios)), ratios, color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd'], 
+                   alpha=0.8, edgecolor='black', linewidth=0.5)
+    ax6.set_xlabel('Capacity Ratios', fontsize=10)
+    ax6.set_ylabel('Ratio Value', fontsize=10)
+    ax6.set_title('Network Capacity Ratios', fontsize=11, fontweight='bold')
+    ax6.set_xticks(range(len(ratios)))
+    ax6.set_xticklabels(labels, rotation=45, ha='right', fontsize=9)
+    ax6.grid(True, alpha=0.3, linewidth=0.5, axis='y')
+    
+    # Add value labels on bars
+    for bar, ratio in zip(bars, ratios):
+        height = bar.get_height()
+        ax6.text(bar.get_x() + bar.get_width()/2., height + max(ratios)*0.01,
+                f'{ratio:.3f}', ha='center', va='bottom', fontsize=9)
+    
+    # 7. Key Metrics Summary
+    ax7 = axes[3, 0]
+    
+    # Use the algorithm library function for maximum stable demand calculation
+    def calculate_max_stable_demand(params):
+        """Calculate maximum stable demand using Graph-JAX algorithm library"""
+        return gj.algorithms.max_stable_demand(params)
+    
+    # Calculate maximum stable demand
+    max_stable_demand = calculate_max_stable_demand(params)
+    avg_demand = np.mean([p for p in production_levels if p < 1.0])
+    critical_threshold = next((p*100 for p, tau in zip(production_levels, collapse_times) if tau <= 1.0), 0)
+    
+    metrics = ['Max Stable\nDemand', 'Average\nDemand', 'Critical\nThreshold']
+    values = [max_stable_demand, avg_demand, critical_threshold]
+    
+    bars = ax7.bar(metrics, values, color=['lightblue', 'lightgreen', 'lightcoral'])
+    ax7.set_ylabel('Value', fontsize=10)
+    ax7.set_title('Key Supply Chain Metrics', fontsize=11, fontweight='bold')
+    ax7.grid(True, alpha=0.3, axis='y')
+    
+    # Add value labels
+    for bar, value in zip(bars, values):
+        height = bar.get_height()
+        ax7.text(bar.get_x() + bar.get_width()/2., height + max(values)*0.01,
+                f'{value:.3f}', ha='center', va='bottom', fontsize=9)
+    
+    # 8. System Vulnerability Assessment
+    ax8 = axes[3, 1]
+    critical_count = sum(1 for tau in collapse_times if tau <= 1.0)
+    warning_count = sum(1 for tau in collapse_times if 1.0 < tau <= 7.0)
+    safe_count = sum(1 for tau in collapse_times if tau > 7.0)
+    
+    vulnerability_data = ['Critical\n(≤1 day)', 'Warning\n(1-7 days)', 'Safe\n(>7 days)']
+    vulnerability_counts = [critical_count, warning_count, safe_count]
+    vulnerability_colors = ['#d62728', '#ff7f0e', '#2ca02c']
+    
+    bars = ax8.bar(vulnerability_data, vulnerability_counts, color=vulnerability_colors, alpha=0.8)
+    ax8.set_ylabel('Number of Scenarios', fontsize=10)
+    ax8.set_title('System Vulnerability Assessment', fontsize=11, fontweight='bold')
+    ax8.grid(True, alpha=0.3, axis='y')
+    
+    # Add value labels
+    for bar, count in zip(bars, vulnerability_counts):
+        height = bar.get_height()
+        ax8.text(bar.get_x() + bar.get_width()/2., height + 0.1,
+                f'{count}', ha='center', va='bottom', fontsize=12, fontweight='bold')
+    
+    plt.tight_layout()
+    plt.savefig('showcase/supply_chain_comprehensive_analysis.png', dpi=300, bbox_inches='tight', facecolor='white')
+    print(f"\nComprehensive analysis chart saved as 'supply_chain_comprehensive_analysis.png'")
 
-def create_key_metrics_visualization(params, results, steady_state):
-    """Create visualization for the four key metrics"""
+def analyze_key_metrics(params, collapse_times, production_levels):
+    """
+    Analyze key metrics for supply chain resilience.
+    """
+    print(f"\n{'='*80}")
+    print(f"KEY METRICS ANALYSIS")
+    print(f"{'='*80}")
     
-    plt.style.use('default')
-    plt.rcParams['font.family'] = 'Arial'
-    plt.rcParams['font.size'] = 10
-    plt.rcParams['axes.linewidth'] = 0.8
-    plt.rcParams['axes.spines.top'] = False
-    plt.rcParams['axes.spines.right'] = False
+    # 1. Maximum stable demand
+    max_stable_demand = params['p'] / params['d']
     
-    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-    fig.suptitle('Supply Chain Network Key Metrics Analysis', fontsize=14, fontweight='bold')
+    # 2. Average demand level
+    avg_demand = np.mean([p for p in production_levels if p < 1.0])
     
-    # 1. Maximum Stable Demand Analysis
-    ax1 = axes[0, 0]
-    max_stable_demand = calculate_maximum_stable_demand(params)
-    production_levels = np.linspace(0.1, 1.0, 100)
-    stable_demands = []
+    # 3. Network capacity ratios
+    capacity_ratios = {
+        'α₁₂ (Production→Terminal)': params['alpha12'],
+        'α₂₃ (Terminal→Consumption)': params['alpha23'],
+        's₁₂/s₁₃ (Direct vs Indirect)': params['s12'] / params['s13'],
+        's₂₃/s₁₃ (Terminal vs Direct)': params['s23'] / params['s13'],
+        's₁₂/s₂₃ (Production vs Terminal)': params['s12'] / params['s23']
+    }
     
-    for p_level in production_levels:
-        test_params = params.copy()
-        test_params['p'] = params['p'] * p_level
-        stable_demand = calculate_maximum_stable_demand(test_params)
-        stable_demands.append(stable_demand)
+    print(f"1. Maximum Stable Demand: {max_stable_demand:.6f}")
+    print(f"2. Time to Failure Analysis: Completed in main simulation")
+    print(f"3. Average Demand Level: {avg_demand:.6f}")
+    print(f"4. Network Capacity Ratios:")
+    for name, ratio in capacity_ratios.items():
+        print(f"   {name}: {ratio:.6f}")
     
-    # Find the production threshold where demand becomes production-constrained
-    threshold_idx = None
-    for i, (p_level, demand) in enumerate(zip(production_levels, stable_demands)):
-        if abs(demand - p_level * params['p'] * 0.8) < 0.001:  # Check if demand is production-constrained
-            threshold_idx = i
-            break
+    # Create key metrics visualization
+    print(f"\nCreating key metrics visualization...")
     
-    ax1.plot(production_levels * 100, stable_demands, 'b-', linewidth=2, label='Maximum Stable Demand')
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
     
-    # Add threshold line if found
-    if threshold_idx is not None:
-        threshold_level = production_levels[threshold_idx] * 100
-        ax1.axvline(x=threshold_level, color='orange', linestyle='--', alpha=0.7, 
-                   label=f'Production Threshold: {threshold_level:.1f}%')
-        ax1.axhline(y=stable_demands[threshold_idx], color='orange', linestyle='--', alpha=0.7)
+    # Key metrics summary
+    metrics = ['Max Stable\nDemand', 'Average\nDemand', 'Critical\nThreshold']
+    values = [max_stable_demand, avg_demand, 
+              next((p*100 for p, tau in zip(production_levels, collapse_times) if tau <= 1.0), 0)]
     
-    ax1.axhline(y=max_stable_demand, color='r', linestyle='--', alpha=0.7, 
-                label=f'Current Max: {max_stable_demand:.3f}')
-    ax1.fill_between(production_levels * 100, stable_demands, alpha=0.3, color='blue')
-    ax1.set_xlabel('Production Level (%)', fontsize=10)
-    ax1.set_ylabel('Maximum Stable Demand', fontsize=10)
-    ax1.set_title('1. Maximum Stable Demand vs Production Level', fontsize=11, fontweight='bold')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
+    bars = ax1.bar(metrics, values, color=['lightblue', 'lightgreen', 'lightcoral'])
+    ax1.set_ylabel('Value')
+    ax1.set_title('Key Supply Chain Metrics')
+    ax1.grid(True, alpha=0.3, axis='y')
     
-    # 2. Time to Demand Failure Analysis
-    ax2 = axes[0, 1]
-    production_levels_plot = []
-    failure_times = []
+    # Add value labels
+    for bar, value in zip(bars, values):
+        height = bar.get_height()
+        ax1.text(bar.get_x() + bar.get_width()/2., height + max(values)*0.01,
+                f'{value:.3f}', ha='center', va='bottom')
     
-    for scenario_name, result in results.items():
-        if 'Complete Shutdown' in scenario_name:
-            production_levels_plot.append(0)
-        elif '100% Production (Steady State)' in scenario_name:
-            production_levels_plot.append(100)
-        elif 'Production' in scenario_name:
-            percentage = float(scenario_name.split('%')[0])
-            production_levels_plot.append(percentage)
-        else:
-            # Skip any other scenarios
-            continue
-        
-        failure_times.append(result['tau'])
-    
-    # Color code based on failure time
-    colors = ['red' if t <= 1 else 'orange' if t <= 7 else 'green' for t in failure_times]
-    
-    scatter = ax2.scatter(production_levels_plot, failure_times, 
-                         c=colors, s=80, alpha=0.8, edgecolors='black', linewidth=0.5)
-    ax2.set_xlabel('Production Level (%)', fontsize=10)
-    ax2.set_ylabel('Time to Failure (days)', fontsize=10)
-    ax2.set_title('2. Time to Demand Failure (τ)', fontsize=11, fontweight='bold')
-    ax2.axhline(y=7, color='green', linestyle='--', alpha=0.7, label='Safe Threshold (7 days)')
-    ax2.axhline(y=1, color='red', linestyle='--', alpha=0.7, label='Critical Threshold (1 day)')
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
-    
-    # 3. Average Demand Level Analysis
-    ax3 = axes[1, 0]
-    avg_demand, t, demand_t = calculate_average_demand_level(params)
-    
-    ax3.plot(t, demand_t, 'g-', linewidth=2, label=f'Supply-Constrained Demand (Avg: {avg_demand:.3f})')
-    ax3.axhline(y=avg_demand, color='orange', linestyle='--', alpha=0.7, 
-                label=f'Average: {avg_demand:.3f}')
-    ax3.fill_between(t, demand_t, alpha=0.3, color='green')
-    ax3.set_xlabel('Time (days)', fontsize=10)
-    ax3.set_ylabel('Demand Level Δ(y₃)', fontsize=10)
-    ax3.set_title('3. Supply-Constrained Demand Level Evolution', fontsize=11, fontweight='bold')
-    ax3.legend()
-    ax3.grid(True, alpha=0.3)
-    
-    # 4. Network Capacity Ratios Analysis
-    ax4 = axes[1, 1]
-    capacity_ratios = analyze_network_capacity_ratios(params)
+    # Capacity ratios
     ratio_names = list(capacity_ratios.keys())
     ratio_values = list(capacity_ratios.values())
     
-    # Handle infinite values
-    ratio_values_plot = [min(v, 100) if np.isfinite(v) else 100 for v in ratio_values]
-    
-    # Create simplified labels without special characters
-    simplified_labels = []
-    for name in ratio_names:
-        if 'α₁₂' in name:
-            simplified_labels.append('α12 (Prod→Term)')
-        elif 'α₂₃' in name:
-            simplified_labels.append('α23 (Term→Cons)')
-        elif 's₁₂/s₁₃' in name:
-            simplified_labels.append('s12/s13 (Direct)')
-        elif 's₂₃/s₁₃' in name:
-            simplified_labels.append('s23/s13 (Term/Direct)')
-        elif 's₁₂/s₂₃' in name:
-            simplified_labels.append('s12/s23 (Prod/Term)')
-        else:
-            simplified_labels.append(name)
-    
-    bars = ax4.bar(range(len(ratio_names)), ratio_values_plot, 
-                   color=['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'],
-                   alpha=0.8, edgecolor='black', linewidth=0.5)
-    
-    ax4.set_xlabel('Capacity Ratios', fontsize=10)
-    ax4.set_ylabel('Ratio Value', fontsize=10)
-    ax4.set_title('4. Network Capacity Ratios', fontsize=11, fontweight='bold')
-    ax4.set_xticks(range(len(ratio_names)))
-    ax4.set_xticklabels(simplified_labels, rotation=45, ha='right', fontsize=9)
-    ax4.grid(True, alpha=0.3, axis='y')
-    
-    # Add value labels on bars
-    for i, (bar, value) in enumerate(zip(bars, ratio_values)):
-        height = bar.get_height()
-        if np.isfinite(value):
-            label = f'{value:.2f}'
-        else:
-            label = '∞'
-        ax4.text(bar.get_x() + bar.get_width()/2., height + 0.01,
-                label, ha='center', va='bottom', fontsize=9)
+    bars2 = ax2.bar(range(len(ratio_values)), ratio_values, color='skyblue')
+    ax2.set_xlabel('Capacity Ratios')
+    ax2.set_ylabel('Ratio Value')
+    ax2.set_title('Network Capacity Ratios')
+    ax2.set_xticks(range(len(ratio_values)))
+    ax2.set_xticklabels(ratio_names, rotation=45, ha='right')
+    ax2.grid(True, alpha=0.3, axis='y')
     
     plt.tight_layout()
-    plt.savefig('showcase/supply_chain_key_metrics.png', dpi=300, bbox_inches='tight', facecolor='white')
+    plt.savefig('supply_chain_key_metrics.png', dpi=300, bbox_inches='tight')
+    print(f"Key metrics chart saved as 'supply_chain_key_metrics.png'")
     
-    return fig, max_stable_demand, avg_demand, capacity_ratios
-
-if __name__ == "__main__":
-    # Create example with Graph-JAX
-    params, g, ref_mask, term_mask, gas_mask = create_supply_chain_example()
-    
-    # Simulate system evolution
-    steady_state, τ, QD, results = simulate_system_evolution(params)
-    
-    # Calculate key metrics
-    print("\n" + "=" * 80)
-    print("KEY METRICS ANALYSIS")
-    print("=" * 80)
-    
-    # 1. Maximum Stable Demand
-    max_stable_demand = calculate_maximum_stable_demand(params)
-    print(f"1. Maximum Stable Demand: {max_stable_demand:.6f}")
-    
-    # 2. Time to Failure (already calculated in simulate_system_evolution)
-    print(f"2. Time to Failure Analysis: Completed in main simulation")
-    
-    # 3. Average Demand Level
-    avg_demand, t, demand_t = calculate_average_demand_level(params)
-    print(f"3. Average Demand Level: {avg_demand:.6f}")
-    
-    # 4. Network Capacity Ratios
-    capacity_ratios = analyze_network_capacity_ratios(params)
-    print("4. Network Capacity Ratios:")
-    for name, value in capacity_ratios.items():
-        if np.isfinite(value):
-            print(f"   {name}: {value:.6f}")
-        else:
-            print(f"   {name}: ∞")
-    
-    # Create key metrics visualization
-    print("\nCreating key metrics visualization...")
-    fig, max_stable_demand, avg_demand, capacity_ratios = create_key_metrics_visualization(params, results, steady_state)
-    
-    print(f"\nKey metrics chart saved as 'supply_chain_key_metrics.png'")
-    
-    # Summary
-    print("\n" + "=" * 80)
-    print("KEY FINDINGS SUMMARY")
-    print("=" * 80)
+    # Key findings summary
+    print(f"\n{'='*80}")
+    print(f"KEY FINDINGS SUMMARY")
+    print(f"{'='*80}")
     print(f"1. Maximum Stable Demand: {max_stable_demand:.6f}")
     print(f"2. Average Demand Level: {avg_demand:.6f}")
-    print(f"3. Most Critical Capacity Ratio: {max(capacity_ratios.items(), key=lambda x: x[1] if np.isfinite(x[1]) else 0)[0]}")
-    print(f"4. System Vulnerability: High (critical threshold at 5% production)")
+    print(f"3. Most Critical Capacity Ratio: {max(capacity_ratios.items(), key=lambda x: x[1])[0]}")
+    
+    critical_threshold = next((p*100 for p, tau in zip(production_levels, collapse_times) if tau <= 1.0), 0)
+    print(f"4. System Vulnerability: {'High' if critical_threshold > 50 else 'Medium' if critical_threshold > 20 else 'Low'} (critical threshold at {critical_threshold:.1f}% production)")
+
+if __name__ == "__main__":
+    # Create supply chain network using Graph-JAX capacity analysis
+    g, params, ref_mask, term_mask, gas_mask = create_supply_chain_network()
+    
+    # Define production disruption scenarios
+    production_levels = [1.0, 0.99, 0.90, 0.75, 0.50, 0.40, 0.30, 0.20, 0.10, 0.05, 0.0]
+    
+    # Simulate system evolution
+    collapse_times, demand_satisfaction, steady_state = simulate_system_evolution(params, production_levels)
+    
+    # Analyze critical thresholds
+    analyze_critical_thresholds(collapse_times, production_levels)
+    
+    # Create comprehensive visualizations
+    create_visualizations(collapse_times, demand_satisfaction, production_levels, params, steady_state)

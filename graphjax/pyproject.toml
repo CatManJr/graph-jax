@@ -15,6 +15,7 @@ dependencies = [
     "flax",
     "networkx",
     "jax-metal",
+    "diffrax",
 ]
 
 [tool.setuptools]

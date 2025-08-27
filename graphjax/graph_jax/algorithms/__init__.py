@@ -4,6 +4,7 @@ from .capacity import (
     capacity_params,
     steady_state,
     failure_time,
+    max_stable_demand,
     batch_capacity_params,
     batch_steady_state,
     batch_failure_time

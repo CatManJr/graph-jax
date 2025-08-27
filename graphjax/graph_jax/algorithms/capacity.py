@@ -61,6 +61,7 @@ def capacity_params(
 capacity_params_jit = jax.jit(capacity_params)
 batch_capacity_params = jax.vmap(capacity_params_jit, in_axes=(None, 0, 0, 0))
 
+@jax.jit
 def steady_state(
     params: dict,
     *,
@@ -68,83 +69,99 @@ def steady_state(
     n_steps: int = 200
 ) -> jnp.ndarray:
     """
-    Compute the system steady state using the SciPy ODE solver.
+    Compute the system steady state using Diffrax ODE solver.
     
-    TODO: Replace with fast JAX-native ODE solver when stable and mature.
-    Currently using SciPy for consistency and stability.
+    Uses diffrax for JIT-compilable ODE solving.
     """
-    import numpy as np
-    from scipy.integrate import odeint
+    import diffrax
 
-    def rhs(y, t, params):
+    def vector_field(t, y, args):
+        """ODE vector field according to paper formula (13)"""
         y1, y2, y3 = y
-        p, d, s12, s23, s13 = params["p"], params["d"], params["s12"], params["s23"], params["s13"]
-        a12, a23 = params["alpha12"], params["alpha23"]
+        p, d, s12, s23, s13 = args["p"], args["d"], args["s12"], args["s23"], args["s13"]
+        a12, a23 = args["alpha12"], args["alpha23"]
 
-            # ODE system according to paper formula (13)
-    # Assume Π(y₁) = y₁, Δ(y₃) = y₃, Ψ(y_q, y_r) = y_q * y_r
+        # ODE system according to paper formula (13)
+        # Assume Π(y₁) = y₁, Δ(y₃) = y₃, Ψ(y_q, y_r) = y_q * y_r
         dy1 = p * y1 - s12 * y1 * y2 - s13 * y1 * y3
         dy2 = (s12 / a12) * y1 * y2 - s23 * y2 * y3
         dy3 = -d * y3 + (s13 / (a12 * a23)) * y1 * y3 + (s23 / a23) * y2 * y3
-        return [dy1, dy2, dy3]
+        return jnp.array([dy1, dy2, dy3])
 
-    y0 = [1.0, 1.0, 1.0]
-    t = np.linspace(0, t_max, n_steps)
-    solution = odeint(rhs, y0, t, args=(params,))
+    y0 = jnp.array([1.0, 1.0, 1.0])
+    t0, t1 = 0.0, t_max
     
-    # Convert back to JAX array for consistency
-    return jnp.array(solution[-1])
+    # Use Diffrax solver
+    solution = diffrax.diffeqsolve(
+        diffrax.ODETerm(vector_field),
+        diffrax.Tsit5(),  # 5th order Runge-Kutta method
+        t0, t1, dt0=0.1,
+        y0=y0,
+        args=params,
+        saveat=diffrax.SaveAt(ts=jnp.array([t1])),  # Only save final state
+    )
+    
+    return solution.ys[0]  # Return final state
 
+def max_stable_demand(params: dict) -> float:
+    """
+    Calculate maximum stable demand using paper's max-flow condition.
+    
+    According to paper equation (19): α12α23d ≤ s13 + min(s12, α12s23)
+    For maximum stable demand, we set equality: α12α23d = s13 + min(s12, α12s23)
+    
+    Args:
+        params: Dictionary containing network parameters (s12, s23, s13, alpha12, alpha23)
+    
+    Returns:
+        Maximum stable demand level
+    """
+    s12 = float(params["s12"])
+    s23 = float(params["s23"])
+    s13 = float(params["s13"])
+    alpha12 = float(params["alpha12"])
+    alpha23 = float(params["alpha23"])
+    
+    # Calculate the right side of the equation
+    direct_path_capacity = s13  # Direct path from refineries to gas stations
+    long_path_capacity = min(s12, alpha12 * s23)  # Long path through terminals
+    
+    total_capacity = direct_path_capacity + long_path_capacity
+    
+    # Calculate maximum stable demand
+    max_stable_demand = total_capacity / (alpha12 * alpha23)
+    
+    return max_stable_demand
+
+@jax.jit
 def failure_time(params: dict, ΔT: float) -> tuple:
     """
     Compute the system failure time and average demand level after production interruption.
     
-    TODO: Make this JIT-compilable when ODE solver is replaced with JAX-native version.
+    Uses JAX operations for JIT compilation.
     """
     y_steady = steady_state(params)
-    y3_0 = float(y_steady[2])  # Convert to Python float for compatibility
-    p = float(params["p"])     # Production rate
-    d = float(params["d"])     # Demand rate
-    
-    import numpy as np
+    y3_0 = y_steady[2]  # Keep as JAX array
+    p = params["p"]     # Keep as JAX array
+    d = params["d"]     # Keep as JAX array
     
     # Check if system is stable (production >= demand)
-    if p >= d:
-        # System is stable, no failure
-        τ = ΔT
-        QD = 1.0
-    else:
-        # System will fail, calculate failure time
-        τ = min(ΔT, y3_0 / d)
-        QD = 1.0 if τ >= ΔT else (y3_0 - 0.5 * d * τ) / y3_0
+    def stable_case():
+        return ΔT, 1.0
     
-    # Convert back to JAX arrays for consistency
-    return jnp.array(τ), jnp.array(QD)
+    def unstable_case():
+        τ = jnp.minimum(ΔT, y3_0 / d)
+        QD = jnp.where(τ >= ΔT, 1.0, (y3_0 - 0.5 * d * τ) / y3_0)
+        return τ, QD
+    
+    τ, QD = jax.lax.cond(p >= d, stable_case, unstable_case)
+    return τ, QD
 
-# Batch computation functions
-def batch_steady_state(params_array: list, *, t_max: float = 50.0, n_steps: int = 200) -> jnp.ndarray:
-    """
-    Batch steady state computation.
-    
-    TODO: Optimize with JAX vmap when ODE solver is replaced with JAX-native version.
-    Currently using Python loop for compatibility with SciPy.
-    """
-    results = []
-    for params in params_array:
-        result = steady_state(params, t_max=t_max, n_steps=n_steps)
-        results.append(result)
-    return jnp.stack(results)
+# Batch computation functions using JAX vmap
+batch_steady_state = jax.vmap(steady_state, in_axes=(0, None, None))
 
-def batch_failure_time(params_array: list, ΔT: float) -> tuple:
+def batch_failure_time(params_array: jnp.ndarray, ΔT: float) -> tuple:
     """
-    Batch failure time computation.
-    
-    TODO: Optimize with JAX vmap when functions are JIT-compilable.
+    Batch failure time computation using JAX vmap.
     """
-    tau_results = []
-    qd_results = []
-    for params in params_array:
-        τ, QD = failure_time(params, ΔT)
-        tau_results.append(τ)
-        qd_results.append(QD)
-    return jnp.stack(tau_results), jnp.stack(qd_results)
+    return jax.vmap(lambda p: failure_time(p, ΔT))(params_array)
