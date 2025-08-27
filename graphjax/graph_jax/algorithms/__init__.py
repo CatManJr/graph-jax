@@ -28,3 +28,7 @@ from .cluster import (
     silhouette_score_jax,
     path_similarity_matrix
 )
+
+from .algebraic_shortest_path import (
+    min_plus_shortest_paths
+)

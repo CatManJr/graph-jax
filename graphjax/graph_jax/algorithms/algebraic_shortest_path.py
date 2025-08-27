@@ -11,8 +11,8 @@ import jax.numpy as jnp
 from typing import Optional, Tuple
 from functools import partial
 from ..graphs import Graph
-from ..kernels import spgemm, parallel_spgemm
-from ..kernels.parallel_spgemm import simplified_shortest_path_spgemm
+from ..kernels import spgemm, distributed_spgemm
+from ..kernels.distributed_spgemm import simplified_shortest_path_spgemm
 from ..kernels.matrix import degree_matrix
 
 

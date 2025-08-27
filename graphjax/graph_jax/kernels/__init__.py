@@ -18,6 +18,6 @@ from .losses import (
     mean_squared_error,
     mean_absolute_error
 )
-from .spgemm import spgemm
-from .parallel_spgemm import spgemm_pmap
+from .spgemm import spgemm, spgemm_with_mask, spgemm_dense_adjacency
+from .distributed_spgemm import spgemm_pmap
 from .min_cut import min_cut, min_cut_matrix
